@@ -1,14 +1,13 @@
 import { defineConfig } from "tsup";
 
 export default defineConfig({
-  entry: ["src/cli.ts"],
+  entry: { cli: "src/cli.ts", "pi-depo-sync": "extensions/pi-depo-sync.ts" },
   format: ["esm"],
-  target: "node20",
+  target: "node22",
   outDir: "dist",
   splitting: false,
   sourcemap: true,
-  external: ["bun"],
   banner: {
-    js: "#!/usr/bin/env bun",
+    js: "#!/usr/bin/env node",
   },
 });

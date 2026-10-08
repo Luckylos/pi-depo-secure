@@ -1,132 +1,136 @@
-# pi-depo (`pd`)
+# pi-depo-secure
 
-Declarative package manager for [Pi Coding Agent](https://github.com/badlogic/pi-mono).  
-Manage skills, extensions, and MCP servers from a single `kit.yml`, synced across machines via GitHub Gist.
+A Git-installable Pi Package for Pi Coding Agent. It combines pi-depo package management with encrypted GitHub Gist synchronization for Pi configuration.
 
-## Install
+This is a fork of pi-depo and is not an official upstream release.
 
-```bash
-bun i -g pi-depo
-```
+## Install as a Pi Package
 
-## Bootstrap flows
+The normal installation path is through Pi, not a global npm install:
 
-### New machine - your own config
+    pi install git:github.com/Luckylos/pi-depo-secure@main
 
-```bash
-pd login      # Authenticate with GitHub (uses gh CLI) - auto-syncs after login
-```
+Use a verified tag or commit instead of `main` for production. Restart Pi after installation so the extension is loaded.
 
-That's it. `pd login` finds your existing gist, pulls `kit.yml`, and installs everything.
+A global `pd` command is not required for the Pi extension. The `pd` CLI remains available as an optional interface for headless automation, development, and maintenance.
 
-### New machine - borrow someone's public config
+## First-time setup
 
-```bash
-pd login
-pd init
-# → "Bootstrap from someone's public gist?" → y
-# → "GitHub username or username/profile:" → fulgidus
-# → imports their kit.yml, offers to sync immediately
-```
+Inside Pi, run:
 
-### First time ever
+    /gist-sync setup
 
-```bash
-pd login      # authenticate
-pd init       # scan current pi installation → generate kit.yml
-              # OR import from a friend's public gist
-pd push       # save to your GitHub Gist (asks public/private once)
-```
+The guided setup checks the Pi agent directory, detects GitHub authentication, discovers or creates a Private Gist, initializes the sync profile, prompts for the encryption passphrase through Pi's UI, previews the managed files, and asks for confirmation before the first write.
+
+It never silently installs packages, updates Pi, or runs `pd sync`.
 
 ## Daily usage
 
-```bash
-pd                    # sync everything (default command)
-pd sync               # same
+Inside Pi:
 
-pd a npm:some-package          # install + add to kit.yml + push gist
-pd a git:github.com/user/repo  # git package (asks: pi-native or skill?)
-pd a git:github.com/user/repo -s skills/my-skill  # skill with subpath, no prompt
-pd rm some-package             # uninstall + remove from kit.yml + push gist
+    /gist-sync status
+    /gist-sync diff
+    /gist-sync push
+    /gist-sync pull
+    /gist-sync doctor
 
-pd toggle             # interactive TUI to enable/disable packages
-pd disable foo        # disable a package (keeps it in kit.yml as disabled)
-pd enable foo         # re-enable a disabled package
-```
+`push` previews the upload before changing the Gist. `pull` shows the configuration diff, creates a local backup, and asks before applying changes. Configuration pull never installs or updates packages automatically.
 
-## What `pd sync` does (in order)
+Backups are stored under:
 
-1. **Self-update** - checks npm for a newer `pi-depo`, installs and restarts if found
-2. **Update pi** - checks npm for a newer `@mariozechner/pi-coding-agent`, installs if found
-3. **Pull gist** - always pulls `kit.yml` from your gist (gist = source of truth)
-4. **Sync packages** - installs missing, upgrades outdated, removes disabled
-5. **Reconcile orphans** - detects packages installed via `pi` but not in `kit.yml`, asks: add or remove
-6. **Push gist** - if anything changed, saves `kit.yml` and pushes
+    ~/.pi/agent/backups/pi-gist-sync/<timestamp>/
 
-## Gist
+To restore a selected backup:
 
-- Gist files: `pi-depo.yml` + `pi-depo.lock.json`
-- Gist description: `pi-depo-<profile>` (e.g. `pi-depo-default`)
-- Public gists can be shared: `pd init` → enter `username` or `username/profile`
-- Public/private is asked once on first `pd push`, stored in `~/.pkit/config.yml`
+    /gist-sync restore BACKUP_DIRECTORY
 
-## kit.yml example
+## Package management
 
-```yaml
-meta:
-  pi_version: "0.70.0"
+Package operations remain explicit:
 
-packages:
-  pi-guardrails:
-    source: "npm:@aliou/pi-guardrails"
-    rating: core
+    /gist-sync packages status
+    /gist-sync packages push
+    /gist-sync packages pull
+    /gist-sync packages sync
 
-  caveman:
-    source: "git:git@github.com:JuliusBrussee/caveman.git"
-    rating: useful
+`pull` and `sync` may install, remove, or update packages and therefore require a separate confirmation. They are never triggered implicitly by configuration `pull`.
 
-  diagram-design:
-    source: "git:github.com/cathrynlavery/diagram-design"
-    type: skill
-    skill_subpath: "skills/diagram-design"
-    rating: debatable
+The extension must work without a global `pd` on PATH. Package actions use shared pi-depo code or the package-local CLI bundle.
 
-  some-old-package:
-    source: "npm:some-old-package"
-    rating: disabled
-    reason: "Replaced by better-package"
-```
+## Optional CLI
 
-## Ratings
+The standalone CLI mirrors the extension for headless workflows:
 
-| Rating | Meaning |
-|--------|---------|
-| `core` | Essential - always installed |
-| `useful` | Nice to have |
-| `debatable` | Optional, experimental |
-| `disabled` | Kept for reference, not installed |
+    pd gist-sync init
+    printf "%s" "$PI_GIST_SYNC_PASSPHRASE" | pd gist-sync setup --passphrase-stdin --yes
+    pd gist-sync status
+    printf "%s" "$PI_GIST_SYNC_PASSPHRASE" | pd gist-sync diff --passphrase-stdin
+    printf "%s" "$PI_GIST_SYNC_PASSPHRASE" | pd gist-sync push --passphrase-stdin --yes
+    printf "%s" "$PI_GIST_SYNC_PASSPHRASE" | pd gist-sync pull --passphrase-stdin --yes
 
-## Commands
+The passphrase is never accepted as a normal command-line argument. For non-interactive use, provide it through `PI_GIST_SYNC_PASSPHRASE` or `--passphrase-stdin`; do not put it in shell history, process arguments, or shared logs.
 
-```sh
-pd / pd sync          Sync everything (self-update + pi update + install + reconcile)
-pd init               Bootstrap kit.yml from pi list, or import from a public gist
-pd add / pd a         Install a package, add to kit.yml, push gist
-pd remove / pd rm     Uninstall, remove from kit.yml, push gist
-pd toggle             Interactive TUI to enable/disable packages
-pd disable <name>     Disable a package
-pd enable <name>      Enable a disabled package
-pd push               Push kit.yml to gist
-pd pull               Pull kit.yml from gist
-pd login              Authenticate with GitHub (auto-syncs after)
-pd status             Show package status
-pd diff               Dry-run sync (show what would change)
-pd verify             Run verify checks for all packages
-pd profiles           List configured profiles
-pd profile <name>     Switch active profile
-```
+## Pi-depo compatibility
 
-## Config location
+The fork keeps the existing pi-depo model and files:
 
-- Config: `~/.pkit/config.yml`
-- Local kit: `./kit.yml` (in current directory)
+    pd login
+    pd init
+    pd push
+    pd status
+    pd diff
+    pd sync
+
+`pd sync` is not run silently by the configuration extension. Updates are opt-in:
+
+    PI_DEPO_ALLOW_UPDATES=1 pd sync
+
+The Git-installed extension is the recommended user interface. The CLI commands are retained for compatibility and advanced use.
+
+## Gist contents
+
+A selected Private Gist may contain:
+
+- `pi-depo.yml` and `kit.lock.json`, owned by pi-depo;
+- `pi-gist-sync.manifest.json`, containing non-secret metadata and a ciphertext hash;
+- `pi-gist-sync.config.enc.json`, containing the encrypted Pi configuration snapshot;
+- unrelated files, which are preserved.
+
+The sync layer never writes a public Gist, stores a GitHub token, or stores the encryption passphrase.
+
+## Configuration scope
+
+Included by default:
+
+- `settings.json`
+- `models.json`
+- `auth.json`
+- `APPEND_SYSTEM.md`
+- known Pi JSON configuration files, including `mcp.json`
+- `agents/`
+- `skills/`, `prompts/`, and `themes/`
+- `extensions/`
+
+Excluded:
+
+- sessions and conversation history
+- fff history and web caches
+- context-mode databases
+- Pi runtime, npm store, and Git checkout directories
+- package-manager credentials
+- symlinks and paths outside `~/.pi/agent`
+
+Pull is additive and overwrite-only by default. It does not delete local files absent from the Gist. `--prune` is explicit and should only be used when the managed directory is authoritative.
+
+## Security properties
+
+- GitHub tokens are read from `gh auth token`, `GITHUB_TOKEN`, or `GH_TOKEN` and are not persisted.
+- Configuration payloads use scrypt and AES-256-GCM with a fresh salt and nonce per push.
+- API keys are never printed by the extension, CLI, manifest, diff, or errors.
+- `models.json`, `mcp.json`, and local sync settings are written with mode `600`.
+- Extension package operations do not depend on a globally installed `pd`.
+- Subprocesses use argument arrays and `shell: false`; user-authored kit steps are the only explicit shell execution path.
+- Gist payload hashes and authenticated encryption are checked before any configuration write.
+- A failed restore attempts a rollback from the in-memory snapshot.
+
+Read `SECURITY.md` before synchronizing credentials or installing third-party Pi packages.

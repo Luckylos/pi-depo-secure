@@ -45,7 +45,7 @@ export function parseSource(raw: string): { type: "npm" | "git" | "local"; spec:
 
 // ─── Infer install type from package manifest ───────────────────
 export function inferInstallType(pkg: PackageManifest | McpServerManifest): InstallType {
-  if (pkg.type) return pkg.type;
+  if ("type" in pkg && pkg.type) return pkg.type;
   // MCP servers are always mcp-server type
   // Packages with steps are custom
   if ("steps" in pkg && pkg.steps) return "custom";

@@ -19,19 +19,32 @@ export function lockPath(cwd?: string): string {
 }
 
 // ─── Config I/O ─────────────────────────────────────────────────
+export function sanitizeConfig(config: PkitConfig): PkitConfig {
+  const safeConfig = { ...config };
+  delete safeConfig.auth;
+  return safeConfig;
+}
 export async function loadConfig(): Promise<PkitConfig> {
   if (!existsSync(CONFIG_PATH)) {
     return {};
   }
   const content = await readFile(CONFIG_PATH, "utf-8");
-  return yaml.load(content) as PkitConfig;
+  let parsed: PkitConfig | undefined;
+  try {
+    parsed = yaml.load(content) as PkitConfig | undefined;
+  } catch {
+    throw new Error("Invalid pi-depo config YAML");
+  }
+  if (!parsed || typeof parsed !== "object") return {};
+  delete parsed.auth;
+  return parsed;
 }
 
 export async function saveConfig(config: PkitConfig): Promise<void> {
   if (!existsSync(PKIT_DIR)) {
     await mkdir(PKIT_DIR, { recursive: true });
   }
-  await writeFile(CONFIG_PATH, yaml.dump(config, { lineWidth: 120, noRefs: true }), "utf-8");
+  await writeFile(CONFIG_PATH, yaml.dump(sanitizeConfig(config), { lineWidth: 120, noRefs: true }), "utf-8");
 }
 
 // ─── Lock I/O ───────────────────────────────────────────────────
@@ -39,7 +52,11 @@ export async function loadLock(cwd?: string): Promise<KitLock | null> {
   const path = lockPath(cwd);
   if (!existsSync(path)) return null;
   const content = await readFile(path, "utf-8");
-  return JSON.parse(content) as KitLock;
+  try {
+    return JSON.parse(content) as KitLock;
+  } catch {
+    throw new Error("Invalid kit lock JSON");
+  }
 }
 
 export async function saveLock(lock: KitLock, cwd?: string): Promise<void> {
@@ -82,7 +99,7 @@ export function remoteApiUrl(provider: RemoteProvider): string {
 
 // ─── Pi paths ───────────────────────────────────────────────────
 export function piAgentDir(): string {
-  return join(homedir(), ".pi", "agent");
+  return process.env.PI_CODING_AGENT_DIR ?? process.env.PI_AGENT_DIR ?? join(homedir(), ".pi", "agent");
 }
 
 export function piSettingsPath(): string {

@@ -1,7 +1,7 @@
 {
-  "name": "pi-depo",
-  "version": "0.1.44",
-  "description": "Declarative package manager for Pi Coding Agent - skills, extensions, hooks, MCP servers",
+  "name": "pi-depo-secure",
+  "version": "0.2.0",
+  "description": "Secure Pi package manager fork with encrypted GitHub Gist configuration sync",
   "keywords": [
     "pi-package",
     "pi-coding-agent",
@@ -10,7 +10,10 @@
   "files": [
     "dist",
     "README.md",
-    "LICENSE"
+    "SECURITY.md",
+    "LICENSE",
+    "src",
+    "extensions"
   ],
   "bin": {
     "pd": "dist/cli.mjs"
@@ -18,11 +21,12 @@
   "main": "./dist/cli.mjs",
   "scripts": {
     "build": "tsup",
-    "dev": "bun run --watch src/cli.ts",
+    "dev": "node --watch --experimental-strip-types src/cli.ts",
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "prepack": "npm run build"
   },
   "dependencies": {
     "@types/prompts": "^2.4.9",
@@ -34,19 +38,27 @@
     "prompts": "^2.4.2"
   },
   "devDependencies": {
-    "@types/bun": "^1.2.0",
     "@types/js-yaml": "^4.0.9",
     "tsup": "^8.4.0",
     "typescript": "^5.8.0",
-    "vitest": "^3.1.0"
+    "vitest": "^3.1.0",
+    "@types/node": "^22.15.0"
   },
   "engines": {
-    "bun": ">=1.0.0"
+    "node": ">=22.19.0"
   },
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/fulgidus/pi-depo.git"
+    "url": "https://github.com/Luckylos/pi-depo-secure.git"
   },
-  "author": "fulgidus"
+  "author": "fulgidus",
+  "pi": {
+    "extensions": [
+      "./extensions/pi-depo-sync.ts"
+    ]
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*"
+  }
 }

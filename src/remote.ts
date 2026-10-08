@@ -1,63 +1,39 @@
-import { $ } from "bun";
+import { runCommand } from "./process.js"
 import { join } from "node:path";
-import { homedir } from "node:os";
-import { readFile, writeFile, mkdir } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import type { RemoteProvider, PkitConfig } from "./types.js";
-import { loadConfig, saveConfig, remoteRawUrl, remoteApiUrl, PKIT_DIR } from "./config.js";
+import { loadConfig, saveConfig, remoteRawUrl, remoteApiUrl } from "./config.js";
 
-// ─── GitHub CLI token extraction ────────────────────────────────
-// Delegates auth entirely to the `gh` CLI - no OAuth App or PAT needed
-
+// ─── Token resolution ───────────────────────────────────────────
+// Tokens are deliberately never persisted by this fork. Prefer environment variables,
+// then read the credential from gh without invoking a shell.
 async function githubTokenFromCLI(): Promise<string> {
-  // Check gh is installed
-  const whichResult = await $`which gh`.quiet().nothrow();
-  if (whichResult.exitCode !== 0) {
-    throw new Error(
-      "GitHub CLI (gh) is not installed.\n" +
-      "  Install it from https://cli.github.com/ then run: gh auth login"
-    );
-  }
+  const status = await runCommand("gh", ["auth", "status"], { timeoutMs: 10_000 });
+  if (status.exitCode !== 0) throw new Error("GitHub CLI is not authenticated. Run: gh auth login --scopes gist");
+  const token = await runCommand("gh", ["auth", "token"], { timeoutMs: 10_000 });
+  const value = token.stdout.toString("utf8").trim();
+  if (token.exitCode !== 0 || !value) throw new Error("Could not retrieve token from GitHub CLI. Run: gh auth login --scopes gist");
+  return value;
+}
 
-  // Check gh is authenticated
-  const statusResult = await $`gh auth status`.quiet().nothrow();
-  if (statusResult.exitCode !== 0) {
-    throw new Error(
-      "GitHub CLI is not authenticated.\n" +
-      "  Run: gh auth login"
-    );
+export async function tokenForProvider(provider: RemoteProvider): Promise<string> {
+  if (provider === "github") {
+    const fromEnvironment = process.env.GITHUB_TOKEN ?? process.env.GH_TOKEN;
+    if (fromEnvironment?.trim()) return fromEnvironment.trim();
+    return await githubTokenFromCLI();
   }
-
-  // Extract token
-  const tokenResult = await $`gh auth token`.quiet().nothrow();
-  if (tokenResult.exitCode !== 0 || !tokenResult.stdout.toString().trim()) {
-    throw new Error(
-      "Could not retrieve token from GitHub CLI.\n" +
-      "  Try: gh auth login --scopes gist"
-    );
-  }
-
-  return tokenResult.stdout.toString().trim();
+  const fromEnvironment = process.env.CODEBERG_TOKEN;
+  if (fromEnvironment?.trim()) return fromEnvironment.trim();
+  throw new Error("Codeberg authentication requires CODEBERG_TOKEN");
 }
 
 // ─── Login command ──────────────────────────────────────────────
 export async function login(provider: RemoteProvider = "github"): Promise<void> {
   console.log(`Logging in to ${provider}...`);
 
-  let token: string;
-  switch (provider) {
-    case "github":
-      token = await githubTokenFromCLI();
-      break;
-    case "codeberg":
-      throw new Error("Codeberg login not yet implemented. Use GitHub for now.");
-    default:
-      throw new Error(`Unknown provider: ${provider}`);
-  }
-
+  const token = await tokenForProvider(provider);
   const config = await loadConfig();
-  if (!config.auth) config.auth = {};
-  config.auth[`${provider}_token`] = token;
 
   const user = await fetchUser(provider, token);
   console.log(`  Authenticated as: ${user}`);
@@ -81,11 +57,7 @@ export async function login(provider: RemoteProvider = "github"): Promise<void> 
   }
 
   await saveConfig(config);
-  console.log("  ✅ Login saved.\n");
-
-  // Auto-sync after login
-  const { sync } = await import("./sync.js");
-  await sync();
+  console.log("  Login saved without persisting credentials. Run 'pd sync' when you are ready.\n");
 }
 
 async function fetchUser(provider: RemoteProvider, token: string): Promise<string> {
@@ -110,11 +82,7 @@ export async function pushManifest(kitYmlContent: string): Promise<void> {
   const config = await loadConfig();
   const profile = getActiveProfile(config);
 
-  if (!config.auth?.[`${profile.provider}_token`]) {
-    throw new Error(`Not logged in to ${profile.provider}. Run 'pd login' first.`);
-  }
-
-  const token = config.auth[`${profile.provider}_token`]!;
+  const token = await tokenForProvider(profile.provider);
   const lockContent = await readLocalLock();
   const kitPath = profile.path ?? "pi-depo.yml";
 
@@ -155,11 +123,10 @@ export async function pushManifest(kitYmlContent: string): Promise<void> {
 export async function pullManifest(): Promise<string> {
   const config = await loadConfig();
   const profile = getActiveProfile(config);
-  const token = config.auth?.[`${profile.provider}_token`];
+  const token = await tokenForProvider(profile.provider);
   const kitPath = profile.path ?? "pi-depo.yml";
 
   if (profile.provider === "github" && profile.repo === "gists") {
-    if (!token) throw new Error("Not logged in to github. Run 'pd login' first.");
     // Auto-discover gist_id if missing (e.g. logged in before gist feature)
     if (!profile.gist_id) {
       const discovered = await findKitGist(token, kitPath);
@@ -220,7 +187,7 @@ async function pushToGithubGist(
   isPublic = false,
   profileName = "default",
 ): Promise<string> {
-  const files: Record<string, { content: string }> = { "pi-depo.yml": { content: kitYmlContent } };
+  const files: Record<string, { content: string }> = { [kitPath]: { content: kitYmlContent } };
   if (lockContent) files["pi-depo.lock.json"] = { content: lockContent };
   const description = `pi-depo-${profileName}`;
   const headers = { Authorization: `token ${token}`, Accept: "application/vnd.github+json", "Content-Type": "application/json" };
@@ -229,14 +196,14 @@ async function pushToGithubGist(
       method: "PATCH", headers, body: JSON.stringify({ files, description }),
     });
     if (res.ok) return existingGistId;
-    if (res.status !== 404) throw new Error(`Gist update failed: ${res.status} ${await res.text()}`);
+    if (res.status !== 404) throw new Error(`Gist update failed: ${res.status}`);
     // 404 = gist was deleted - fall through to create a new one
   }
   const res = await fetch("https://api.github.com/gists", {
     method: "POST", headers,
     body: JSON.stringify({ files, public: isPublic, description }),
   });
-  if (!res.ok) throw new Error(`Gist create failed: ${res.status} ${await res.text()}`);
+  if (!res.ok) throw new Error(`Gist create failed: ${res.status}`);
   return (await res.json() as { id: string }).id;
 }
 
@@ -313,8 +280,7 @@ async function pushFileToGithub(
   });
 
   if (!res.ok) {
-    const err = await res.text();
-    throw new Error(`GitHub push failed for ${path}: ${res.status} ${err}`);
+    throw new Error(`GitHub push failed for ${path}: ${res.status}`);
   }
 }
 
@@ -373,8 +339,7 @@ async function pushFileToCodeberg(
   });
 
   if (!res.ok) {
-    const err = await res.text();
-    throw new Error(`Codeberg push failed for ${path}: ${res.status} ${err}`);
+    throw new Error(`Codeberg push failed for ${path}: ${res.status}`);
   }
 }
 

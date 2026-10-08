@@ -1,7 +1,7 @@
-import { $ } from "bun";
-import type { PackageManifest, McpServerManifest, InstallType, SyncAction, PackageStatus } from "./types.js";
-import { parseSource, inferInstallType, expandTemplate } from "./manifest.js";
-import { templateVars, piSkillsDir, piExtensionsDir } from "./config.js";
+import { formatCommandError, runCommand, runShellCommand } from "./process.js"
+import type { PackageManifest, McpServerManifest, InstallType, PackageStatus } from "./types.js";
+import { parseSource, expandTemplate } from "./manifest.js";
+import { templateVars, piSkillsDir } from "./config.js";
 import { mergeIntoJsonFile } from "./merge.js";
 import { join } from "node:path";
 import { existsSync } from "node:fs";
@@ -20,18 +20,19 @@ export const piNativeProvider: Provider = {
   async install(name: string, pkg: PackageManifest): Promise<void> {
     const source = expandTemplate(pkg.source, templateVars());
     try {
-      await $`pi install ${source}`.quiet();
+      const result = await runCommand("pi", ["install", source]);
+      if (result.exitCode !== 0) throw formatCommandError("pi", ["install", source], result);
     } catch (e) {
       throw new Error(`pi install failed for ${name}: ${e}`);
     }
   },
 
-  async remove(name: string, pkg: PackageManifest): Promise<void> {
+  async remove(_name: string, pkg: PackageManifest): Promise<void> {
     try {
       // pi tracks packages by their source specifier (e.g. npm:pi-mcp-adapter),
       // not by the short name - use source for removal
       const source = expandTemplate(pkg.source, templateVars());
-      await $`pi remove ${source}`.quiet().nothrow();
+      await runCommand("pi", ["remove", source]);
     } catch {
       // ignore
     }
@@ -39,8 +40,9 @@ export const piNativeProvider: Provider = {
 
   async verify(name: string, _pkg: PackageManifest): Promise<boolean> {
     try {
-      const result = await $`pi list`.quiet();
-      const output = result.text();
+      const result = await runCommand("pi", ["list"]);
+      if (result.exitCode !== 0) return false;
+      const output = result.stdout.toString("utf8");
       return output.includes(name);
     } catch {
       return false;
@@ -88,14 +90,10 @@ export const customProvider: Provider = {
         }
       }
 
-      console.log(`  [${stepName}] ${expanded}`);
+      console.log(`  [${stepName}] executing`);
       try {
-        const result = await $`sh -c ${expanded}`.nothrow();
-        if (result.exitCode !== 0) {
-          const errOut = (result.stderr.toString() + result.stdout.toString()).trim();
-          const hint = errOut.split("\n").filter(l => l.trim()).slice(-5).join("\n  ");
-          throw new Error(`Step '${stepName}' failed (exit ${result.exitCode}):\n  ${hint}`);
-        }
+        const result = await runShellCommand(expanded);
+        if (result.exitCode !== 0) throw new Error(`Step '${stepName}' failed (exit ${result.exitCode})`);
       } catch (e) {
         throw new Error(e instanceof Error ? e.message : `Step '${stepName}' failed for ${name}: ${e}`);
       }
@@ -115,7 +113,7 @@ export const customProvider: Provider = {
     }
   },
 
-  async remove(name: string, pkg: PackageManifest): Promise<void> {
+  async remove(_name: string, pkg: PackageManifest): Promise<void> {
     // Custom removal: we try to remove the cloned dir
     // This is best-effort since custom packages may spread files
     const vars = templateVars();
@@ -146,12 +144,13 @@ export const customProvider: Provider = {
     }
   },
 
-  async verify(name: string, pkg: PackageManifest): Promise<boolean> {
+  async verify(_name: string, pkg: PackageManifest): Promise<boolean> {
     if (!pkg.verify) return false;
     const vars = templateVars();
     const cmd = expandTemplate(pkg.verify.check, vars);
     try {
-      await $`sh -c ${cmd}`.quiet();
+      const result = await runShellCommand(cmd);
+      if (result.exitCode !== 0) return false;
       return true;
     } catch {
       return false;
@@ -178,10 +177,13 @@ export const skillProvider: Provider = {
       const gitUrl = source.spec.includes("://")
         ? source.spec
         : `https://${source.spec}`;
-      const refArg = source.ref ? `--branch ${source.ref}` : "";
 
       try {
-        await $`git clone --depth 1 ${refArg || ""} ${gitUrl} ${tmpDir}`.quiet();
+        const gitArgs = ["clone", "--depth", "1"];
+        if (source.ref) gitArgs.push("--branch", source.ref);
+        gitArgs.push(gitUrl, tmpDir);
+        const result = await runCommand("git", gitArgs);
+        if (result.exitCode !== 0) throw formatCommandError("git", gitArgs, result);
       } catch (e) {
         throw new Error(`git clone failed for skill ${name}: ${e}`);
       }
@@ -237,7 +239,8 @@ export const mcpServerProvider: Provider = {
     // Install the server binary/package
     if (source.type === "npm") {
       try {
-        await $`npm install -g ${source.spec}`.quiet();
+        const result = await runCommand("npm", ["install", "-g", source.spec]);
+        if (result.exitCode !== 0) throw formatCommandError("npm", ["install", "-g", source.spec], result);
       } catch (e) {
         throw new Error(`npm install -g failed for MCP ${name}: ${e}`);
       }
@@ -301,7 +304,8 @@ export const mcpServerProvider: Provider = {
       const vars = templateVars();
       const cmd = expandTemplate(mcp.verify.check, vars);
       try {
-        await $`sh -c ${cmd}`.quiet();
+        const result = await runShellCommand(cmd);
+        if (result.exitCode !== 0) return false;
         return true;
       } catch {
         return false;

@@ -1,16 +1,18 @@
-import { VERSION } from "./version.js";
+import { VERSION } from "./version.js"
+import { commandExists, runCommand } from "./process.js"
 import { readFile, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import pc from "picocolors";
 import type { KitManifest, PackageManifest, McpServerManifest, SyncAction, InstallType, KitLock, LockEntry } from "./types.js";
-import { parseManifest, validateManifest, inferInstallType, parseSource, expandTemplate } from "./manifest.js";
-import { loadLock, saveLock, kitYmlPath, loadConfig, templateVars } from "./config.js";
+import { parseManifest, validateManifest, inferInstallType, parseSource, expandTemplate, serializeManifest } from "./manifest.js";
+import { saveLock, kitYmlPath, loadConfig, templateVars } from "./config.js";
 import { getProvider } from "./providers.js";
 import { pullManifest } from "./remote.js";
 
 // ─── Self-update check ─────────────────────────────────────────
 // ─── Self-update pd ───────────────────────────────────────────
 const MAX_UPDATE_ATTEMPTS = 3;
+const PD_PACKAGE = "pi-depo-secure";
 
 const OLD_PI_PACKAGE = "@mariozechner/pi-coding-agent";
 const PI_PACKAGE = "@earendil-works/pi-coding-agent";
@@ -29,19 +31,19 @@ function semverGt(a: string, b: string): boolean {
 // ─── Update pi agent itself ─────────────────────────────
 async function updatePiAgent(): Promise<string | null> {
   try {
-    const viewResult = await Bun.$`npm view ${PI_PACKAGE} version`.quiet().nothrow();
+    const viewResult = await runCommand("npm", ["view", PI_PACKAGE, "version"]);
     if (viewResult.exitCode !== 0) return null;
     const latest = viewResult.stdout.toString().trim();
     if (!latest) return null;
 
     // Use pi --version to get installed version (works with vp-managed installs)
-    const versionResult = await Bun.$`pi --version`.quiet().nothrow();
+    const versionResult = await runCommand("pi", ["--version"]);
     const installed = versionResult.exitCode === 0 ? versionResult.stdout.toString().trim() : null;
 
     // Detect legacy @mariozechner install and migrate transparently
     let needsMigration = false;
     try {
-      const listResult = await Bun.$`npm list -g ${OLD_PI_PACKAGE} --json --depth=0`.quiet().nothrow();
+      const listResult = await runCommand("npm", ["list", "-g", OLD_PI_PACKAGE, "--json", "--depth=0"]);
       if (listResult.exitCode === 0) {
         const data = JSON.parse(listResult.stdout.toString()) as { dependencies?: Record<string, unknown> };
         needsMigration = !!(data.dependencies?.[OLD_PI_PACKAGE]);
@@ -53,8 +55,8 @@ async function updatePiAgent(): Promise<string | null> {
       // (old and new namespaces may lag each other briefly)
       const target = installed && semverGt(installed, latest) ? installed : latest;
       console.log(pc.yellow(`  Migrating pi: ${OLD_PI_PACKAGE} → ${PI_PACKAGE}@${target}...`));
-      await Bun.$`npm uninstall -g ${OLD_PI_PACKAGE}`.quiet().nothrow();
-      const result = await Bun.$`npm install -g ${PI_PACKAGE}@${target}`.nothrow();
+      await runCommand("npm", ["uninstall", "-g", OLD_PI_PACKAGE]);
+      const result = await runCommand("npm", ["install", "-g", PI_PACKAGE + "@" + target]);
       if (result.exitCode === 0) {
         console.log(pc.green(`  ✅ pi migrated to ${PI_PACKAGE}@${target}`));
         return target;
@@ -66,7 +68,7 @@ async function updatePiAgent(): Promise<string | null> {
     // Never downgrade - only proceed if latest is strictly newer
     if (installed && !semverGt(latest, installed)) return installed;
     console.log(pc.yellow(`  ⬆  pi ${installed ?? "?"} → ${latest}, updating...`));
-    const result = await Bun.$`npm install -g ${PI_PACKAGE}@${latest}`.nothrow();
+    const result = await runCommand("npm", ["install", "-g", PI_PACKAGE + "@" + latest]);
     if (result.exitCode === 0) {
       console.log(pc.green(`  ✅ pi updated to ${latest}`));
       return latest;
@@ -80,7 +82,7 @@ async function updatePiAgent(): Promise<string | null> {
 // ─── Run pi update (git packages + anything not in kit.yml) ───
 // ─── Reconcile orphans (installed via pi but not in kit.yml) ───
 async function reconcileOrphans(manifest: KitManifest): Promise<boolean> {
-  const result = await Bun.$`pi list`.quiet().nothrow();
+  const result = await runCommand("pi", ["list"]);
   if (result.exitCode !== 0) return false;
 
   // Parse pi list: source lines (2 spaces) followed by path lines (4 spaces)
@@ -131,7 +133,7 @@ async function reconcileOrphans(manifest: KitManifest): Promise<boolean> {
 
     if (action === "remove") {
       console.log(pc.dim(`  Removing ${orphan.basename}...`));
-      await Bun.$`pi remove ${orphan.source}`.quiet().nothrow();
+      await runCommand("pi", ["remove", orphan.source]);
       console.log(pc.green(`  ✅ ${orphan.basename} removed`));
     } else {
       manifest.packages[orphan.basename] = { source: orphan.source, rating: action as "core" | "useful" | "debatable" };
@@ -167,13 +169,13 @@ async function selfUpdate(currentVersion: string): Promise<boolean> {
 
   try {
     // npm view returns only versions that are actually downloadable
-    const viewResult = await Bun.$`npm view pi-depo version`.quiet().nothrow();
+    const viewResult = await runCommand("npm", ["view", PD_PACKAGE, "version"]);
     if (viewResult.exitCode !== 0) return false;
     const latest = viewResult.stdout.toString().trim();
     if (!latest || latest === currentVersion) return false;
 
     console.log(pc.yellow(`  ⬆  pd ${currentVersion} → ${latest}, updating...`));
-    const result = await Bun.$`npm install -g pi-depo@${latest}`.nothrow();
+    const result = await runCommand("npm", ["install", "-g", PD_PACKAGE + "@" + latest]);
     if (result.exitCode !== 0) {
       console.log(pc.red(`  ❌ pd update failed\n`));
       return false;
@@ -181,7 +183,7 @@ async function selfUpdate(currentVersion: string): Promise<boolean> {
 
     // Parse installed version from npm output
     const out = result.stdout.toString() + result.stderr.toString();
-    const match = out.match(/pi-depo@([\d.]+)/);
+    const match = out.match(/pi-depo-secure@([\d.]+)/);
     const installedVersion = match?.[1] ?? latest;
 
     if (installedVersion === currentVersion) {
@@ -189,7 +191,7 @@ async function selfUpdate(currentVersion: string): Promise<boolean> {
     }
 
     console.log(pc.green(`  ✅ pd updated to ${installedVersion}, restarting...\n`));
-    const pdBin = Bun.which("pd");
+    const pdBin = (await commandExists("pd")) ? "pd" : null;
     if (pdBin) {
       const { spawnSync } = await import("child_process");
       spawnSync(pdBin, process.argv.slice(2), {
@@ -208,7 +210,8 @@ async function selfUpdate(currentVersion: string): Promise<boolean> {
 export async function loadManifest(cwd?: string): Promise<KitManifest> {
   const localPath = kitYmlPath(cwd);
   const config = await loadConfig();
-  const isLoggedIn = !!(config.auth?.github_token || config.auth?.codeberg_token);
+  const activeProfile = config.profiles?.[config.active_profile ?? "default"];
+  const isLoggedIn = Boolean(activeProfile?.gist_id);
 
   if (isLoggedIn) {
     // Always pull from gist when logged in - gist is the source of truth
@@ -236,11 +239,12 @@ export async function loadManifest(cwd?: string): Promise<KitManifest> {
 }
 
 // ─── Sync command ───────────────────────────────────────────────
-export async function sync(dryRun = false): Promise<SyncAction[]> {
-  await selfUpdate(VERSION);
+export async function sync(dryRun = false, options: { allowUpdates?: boolean } = {}): Promise<SyncAction[]> {
+  const allowUpdates = options.allowUpdates ?? process.env.PI_DEPO_ALLOW_UPDATES === "1";
+  if (allowUpdates) await selfUpdate(VERSION);
   const [manifest, piVersion] = await Promise.all([
     loadManifest(),
-    updatePiAgent(),
+    allowUpdates ? updatePiAgent() : Promise.resolve(null),
   ]);
 
   // Update pi version in manifest if changed
@@ -335,7 +339,7 @@ export async function sync(dryRun = false): Promise<SyncAction[]> {
   }
 
   // Update lock file
-  await updateLock(manifest, actions);
+  await updateLock(actions);
 
   // If pi version changed, save updated manifest + push
   if (piVersion && piVersion !== manifest.meta.pi_version) {
@@ -348,11 +352,11 @@ export async function sync(dryRun = false): Promise<SyncAction[]> {
   console.log(pc.green("\n  Sync complete.\n"));
 
   // Run pi update for git-sourced packages (pd can't version-check git commits)
-  if (!dryRun) {
+  if (!dryRun && allowUpdates) {
     const hasGitPkgs = Object.values(manifest.packages).some(p =>
       p.rating !== "disabled" && (p.source.startsWith("git:") || p.source.startsWith("http"))
     );
-    if (hasGitPkgs) await Bun.$`pi update`.nothrow().quiet();
+    if (hasGitPkgs) await runCommand("pi", ["update"]);
   }
 
   if (!dryRun) await reconcileOrphans(manifest);
@@ -367,16 +371,11 @@ export async function status(): Promise<void> {
   printActions(actions);
 }
 
-// ─── Get installed pi-native packages (single pi list call) ─────
-async function getInstalledPiPackages(): Promise<Set<string>> {
-  return new Set((await getPiInstalledMap()).keys());
-}
-
 // Returns Map<basename, installPath>
 async function getPiInstalledMap(): Promise<Map<string, string>> {
   const map = new Map<string, string>();
   try {
-    const result = await Bun.$`pi list`.quiet().nothrow();
+    const result = await runCommand("pi", ["list"]);
     if (result.exitCode !== 0) return map;
     for (const line of result.stdout.toString().split("\n")) {
       const trimmed = line.trim();
@@ -558,7 +557,7 @@ function printActions(actions: SyncAction[]): void {
 }
 
 // ─── Update lock ────────────────────────────────────────────────
-async function updateLock(manifest: KitManifest, actions: SyncAction[]): Promise<void> {
+async function updateLock(actions: SyncAction[]): Promise<void> {
   const lock: KitLock = {
     version: 1,
     synced_at: new Date().toISOString(),
@@ -593,7 +592,7 @@ export async function removePackage(name: string): Promise<void> {
 
   // Uninstall from pi
   console.log(pc.cyan(`  Removing ${name}...`));
-  await Bun.$`pi remove ${pkg.source}`.quiet().nothrow();
+  await runCommand("pi", ["remove", pkg.source]);
 
   // Remove from kit.yml
   delete manifest.packages[name];
@@ -636,7 +635,7 @@ export async function enablePackage(name: string): Promise<void> {
     return;
   }
   pkg.rating = "useful";
-  delete (pkg as Record<string, unknown>).reason;
+  delete pkg.reason;
   await saveManifestFile(manifest);
   console.log(pc.green(`  ✅ ${name} enabled.`));
   await sync();
@@ -734,7 +733,6 @@ export async function addPackage(
 ): Promise<void> {
   const normalizedSource = source.includes(":") ? source : `npm:${source}`;
   const isGit = normalizedSource.startsWith("git:") || normalizedSource.startsWith("http");
-  const isNpm = normalizedSource.startsWith("npm:");
 
   // For git sources without --subpath: ask what type it is
   let resolvedSubpath = skillSubpath;
@@ -799,7 +797,7 @@ export async function addPackage(
     }
   } else {
     // pi-native: let pi handle it (npm or git)
-    const result = await Bun.$`pi install ${normalizedSource}`.quiet().nothrow();
+    const result = await runCommand("pi", ["install", normalizedSource]);
     if (result.exitCode !== 0) {
       const raw = result.stderr.toString() + result.stdout.toString();
       const lines = raw.split("\n").map(l => l.replace(/^npm error /, "").trim()).filter(Boolean);
@@ -828,6 +826,48 @@ export async function addPackage(
   } catch (e) {
     console.log(pc.yellow(`  ⚠  Could not push to gist: ${e instanceof Error ? e.message : e}`));
   }
+}
+
+export async function bootstrapManifestFromPi(): Promise<void> {
+  if (existsSync(kitYmlPath())) return;
+
+  let piListOutput = "";
+  try {
+    const result = await runCommand("pi", ["list"]);
+    piListOutput = result.stdout.toString("utf8");
+  } catch {
+    console.log(pc.yellow("  ⚠ Pi not found or not installed. Creating empty kit.yml."));
+  }
+
+  const lines = piListOutput.split("\n");
+  const manifest: KitManifest = {
+    meta: { pi_version: undefined, home: "~" },
+    packages: {},
+    mcp_servers: {},
+  };
+
+  let currentSource: string | null = null;
+  for (const line of lines) {
+    if (line.startsWith("    ")) {
+      if (currentSource) {
+        const parts = line.trim().split("/");
+        const name = parts[parts.length - 1]!;
+        if (name && !manifest.packages[name]) manifest.packages[name] = { source: currentSource, rating: "useful" };
+        currentSource = null;
+      }
+    } else if (line.startsWith("  ") && line.trim()) {
+      currentSource = line.trim();
+    }
+  }
+
+  try {
+    const versionResult = await runCommand("pi", ["--version"]);
+    const version = versionResult.exitCode === 0 ? versionResult.stdout.toString().trim() : null;
+    if (version) manifest.meta.pi_version = version;
+  } catch { /* ignore */ }
+
+  await writeFile(kitYmlPath(), serializeManifest(manifest), "utf8");
+  console.log(pc.green("  ✅ Created kit.yml with " + Object.keys(manifest.packages).length + " packages."));
 }
 
 // ─── Init command ───────────────────────────────────────────────
@@ -859,8 +899,8 @@ export async function init(): Promise<void> {
   // Read pi list output
   let piListOutput = "";
   try {
-    const result = await Bun.$`pi list`.quiet();
-    piListOutput = result.text();
+    const result = await runCommand("pi", ["list"]);
+    piListOutput = result.stdout.toString("utf8");
   } catch {
     console.log(pc.yellow("  ⚠ Pi not found or not installed. Creating empty kit.yml."));
   }
@@ -892,7 +932,7 @@ export async function init(): Promise<void> {
 
   // Get current pi version via pi --version (package-name-agnostic)
   try {
-    const versionResult = await Bun.$`pi --version`.quiet().nothrow();
+    const versionResult = await runCommand("pi", ["--version"]);
     const v = versionResult.exitCode === 0 ? versionResult.stdout.toString().trim() : null;
     if (v) manifest.meta.pi_version = v;
   } catch { /* ignore */ }

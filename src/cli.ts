@@ -297,9 +297,11 @@ const main = defineCommand({
             await ensureCliGithubAuth();
             const root = piAgentDir(args.agentDir as string | undefined);
             const current = await loadSyncSettings(root);
-            if (current.gistId) throw new Error("Pi Gist Sync is already configured. Use 'pd gist-sync push' or 'pd gist-sync pull'.");
-            const phrase = await readPassphrase(args.passphraseStdin === true);
             const requestedGist = args.gistId as string | undefined;
+            const createNew = args.create === true;
+            if (current.gistId && !requestedGist && !createNew) throw new Error("Pi Gist Sync is already configured. Use 'pd gist-sync push' or 'pd gist-sync pull'.");
+            const setupSettings = createNew ? { ...current, gistId: undefined } : current;
+            const phrase = await readPassphrase(args.passphraseStdin === true);
             if (requestedGist) {
               const settings = { ...current, gistId: requestedGist };
               const preview = await diffConfig({ agentDir: root, passphrase: phrase, settings });
@@ -309,7 +311,7 @@ const main = defineCommand({
               if (args.json) console.log(JSON.stringify(result, null, 2)); else console.log(pc.green("  Configuration restored. Backup: " + result.backupPath));
               return;
             }
-            const matches = args.create ? [] : await discoverSyncGists({ agentDir: root, settings: current });
+            const matches = createNew ? [] : await discoverSyncGists({ agentDir: root, settings: setupSettings });
             if (matches.length > 1) throw new Error("Multiple matching private Gists found. Use --gist-id=<id> or --create.");
             if (matches.length === 1) {
               const existing = matches.at(0);
@@ -322,10 +324,10 @@ const main = defineCommand({
               if (args.json) console.log(JSON.stringify(result, null, 2)); else console.log(pc.green("  Configuration restored. Backup: " + result.backupPath));
               return;
             }
-            const preview = await previewConfig({ agentDir: root, passphrase: phrase, settings: current, createNew: args.create === true });
+            const preview = await previewConfig({ agentDir: root, passphrase: phrase, settings: setupSettings, createNew: createNew });
             if (args.json) console.log(JSON.stringify(preview, null, 2)); else printConfigPreview(preview);
             requireYes(args.yes === true, "setup");
-            const result = await setupSync({ agentDir: root, passphrase: phrase, profile: args.profile as string | undefined, settings: current, createNew: args.create === true });
+            const result = await setupSync({ agentDir: root, passphrase: phrase, profile: args.profile as string | undefined, settings: setupSettings, createNew: createNew });
             if (args.json) console.log(JSON.stringify(result, null, 2)); else console.log(pc.green("  Created private Gist " + result.gistId + "."));
           },
         }),

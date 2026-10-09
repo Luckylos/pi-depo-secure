@@ -105,7 +105,8 @@ export default function register(pi: ExtensionAPI): void {
           const current = await loadSyncSettings(root);
           const requestedGist = optionValue(parts, "--gist-id");
           const createNew = hasFlag(parts, "--create");
-          if (current.gistId && !requestedGist) throw new Error("Pi Gist Sync is already configured. Use /gist-sync push or /gist-sync pull.");
+          if (current.gistId && !requestedGist && !createNew) throw new Error("Pi Gist Sync is already configured. Use /gist-sync push or /gist-sync pull.");
+          const setupSettings = createNew ? { ...current, gistId: undefined } : current;
           const phrase = await confirmedPassphrase(ctx);
           const restoreGistId = requestedGist;
           if (restoreGistId) {
@@ -117,7 +118,7 @@ export default function register(pi: ExtensionAPI): void {
             ctx.ui.notify("Configuration restored from Gist " + result.gistId + ". Backup: " + result.backupPath, "info");
             return;
           }
-          const matches = createNew ? [] : await discoverSyncGists({ agentDir: root, settings: current });
+          const matches = createNew ? [] : await discoverSyncGists({ agentDir: root, settings: setupSettings });
           if (matches.length > 1) throw new Error("Multiple matching private Gists found. Use /gist-sync setup --gist-id=<id> or --create.");
           if (matches.length === 1) {
             const existing = matches[0];
@@ -133,10 +134,10 @@ export default function register(pi: ExtensionAPI): void {
             }
             if (!(await confirmWrite(ctx, "Create a new private Gist instead?", "Only this machine's encrypted configuration will be uploaded."))) return;
           }
-          const preview = await previewConfig({ agentDir: root, passphrase: phrase, settings: current, createNew: true });
+          const preview = await previewConfig({ agentDir: root, passphrase: phrase, settings: setupSettings, createNew: true });
           ctx.ui.notify(previewText(preview), "info");
           if (!(await confirmWrite(ctx, "Create a new Pi Gist Sync?", "A new private Gist will receive an encrypted snapshot. Package operations will not run."))) return;
-          const result = await setupSync({ agentDir: root, passphrase: phrase, profile: optionValue(parts, "--profile"), settings: current, createNew: true });
+          const result = await setupSync({ agentDir: root, passphrase: phrase, profile: optionValue(parts, "--profile"), settings: setupSettings, createNew: true });
           ctx.ui.notify("Created private Gist " + result.gistId + " (" + result.manifest.fileCount + " files)", "info");
           return;
         }

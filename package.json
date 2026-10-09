@@ -1,6 +1,6 @@
 {
   "name": "pi-depo-secure",
-  "version": "0.3.5",
+  "version": "0.3.6",
   "description": "Secure Pi package manager fork with encrypted GitHub Gist configuration sync",
   "keywords": [
     "pi-package",

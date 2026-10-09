@@ -1,6 +1,6 @@
 import { access, chmod, mkdir, readdir, readFile, realpath, rename, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
-import { isAbsolute, join, relative, resolve } from "node:path";
+import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { collectSnapshot, diffSnapshots, applySnapshot, type SnapshotDiff } from "./snapshot.js";
 import { decryptSnapshot, encryptSnapshot, sha256, type EncryptedSnapshot, type SnapshotEntry } from "./crypto.js";
 import { GistClient, SYNC_CONFIG_FILE, SYNC_MANIFEST_FILE, type GistResponse } from "./gist-remote.js";
@@ -309,7 +309,9 @@ function manifestFromPayload(settings: SyncSettings, entries: SnapshotEntry[], p
 }
 
 export async function previewConfig(options: { agentDir: string; passphrase: string; client?: GistClientLike; settings?: SyncSettings; createNew?: boolean }): Promise<ConfigPreview> {
-  const settings = options.createNew ? validateSettings(options.settings ?? await loadSyncSettings(options.agentDir)) : await effectiveSettings(options.agentDir, options.settings);
+  const settings = options.createNew
+    ? validateSettings({ ...(options.settings ?? await loadSyncSettings(options.agentDir)), gistId: undefined })
+    : await effectiveSettings(options.agentDir, options.settings);
   const entries = await collectSnapshot(options.agentDir, settings.include, settings.exclude);
   const encrypted = await encryptSnapshot(entries, options.passphrase);
   const payload = JSON.stringify(encrypted);
@@ -358,7 +360,9 @@ export async function pushConfig(options: { agentDir: string; passphrase: string
     if (!packageResult.available || packageResult.exitCode !== 0) throw new Error("pi-depo package push failed");
   }
   const client = await resolveClient(options.client);
-  const settings = options.createNew ? initialSettings : await effectiveSettings(options.agentDir, initialSettings);
+  const settings = options.createNew
+    ? validateSettings({ ...initialSettings, gistId: undefined })
+    : await effectiveSettings(options.agentDir, initialSettings);
   if (!settings.gistId) {
     const matches = await findMatchingGists(client, settings);
     if (!options.createNew) {
@@ -386,7 +390,7 @@ export async function pushConfig(options: { agentDir: string; passphrase: string
 
 export async function setupSync(options: { agentDir: string; passphrase: string; client?: GistClientLike; settings?: SyncSettings; profile?: string; gistId?: string; syncPackages?: boolean; packageConfig?: PackageConfigStore; packageSetup?: PackageSetup; createNew?: boolean }): Promise<SetupResult> {
   const current = validateSettings(options.settings ?? await loadSyncSettings(options.agentDir));
-  const settings = validateSettings({ ...current, ...(options.profile ? { profile: options.profile, description: "pi-gist-sync-" + options.profile } : {}), ...(options.gistId ? { gistId: options.gistId } : {}) });
+  const settings = validateSettings({ ...current, ...(options.createNew ? { gistId: undefined } : {}), ...(options.profile ? { profile: options.profile, description: "pi-gist-sync-" + options.profile } : {}), ...(options.gistId ? { gistId: options.gistId } : {}) });
   const hadExistingGist = Boolean(settings.gistId);
   const client = await resolveClient(options.client);
   const result = await pushConfig({ agentDir: options.agentDir, passphrase: options.passphrase, client, settings, syncPackages: options.syncPackages, packageConfig: options.packageConfig, createNew: options.createNew });
@@ -513,11 +517,11 @@ export async function restoreBackup(options: { agentDir: string; backupPath: str
   const backupRoot = resolve(options.backupPath);
   const allowedRoot = resolve(join(root, "backups", "pi-gist-sync"));
   const relativeBackup = relative(allowedRoot, backupRoot);
-  if (relativeBackup === ".." || relativeBackup.startsWith(".." + "/") || isAbsolute(relativeBackup)) throw new Error("Backup path is outside the Pi backup directory");
+  if (relativeBackup === ".." || relativeBackup.startsWith(".." + sep) || isAbsolute(relativeBackup)) throw new Error("Backup path is outside the Pi backup directory");
   let safeBackupRoot: string;
   try { safeBackupRoot = await realpath(backupRoot); } catch { throw new Error("Backup directory does not exist"); }
   const resolvedRelative = relative(allowedRoot, safeBackupRoot);
-  if (resolvedRelative === ".." || resolvedRelative.startsWith(".." + "/") || isAbsolute(resolvedRelative)) throw new Error("Backup path resolves outside the Pi backup directory");
+  if (resolvedRelative === ".." || resolvedRelative.startsWith(".." + sep) || isAbsolute(resolvedRelative)) throw new Error("Backup path resolves outside the Pi backup directory");
   let encrypted: EncryptedSnapshot;
   try { encrypted = JSON.parse(await readFile(join(safeBackupRoot, SYNC_CONFIG_FILE), "utf8")) as EncryptedSnapshot; } catch { throw new Error("Invalid backup payload JSON"); }
   const entries = await decryptSnapshot(encrypted, options.passphrase);

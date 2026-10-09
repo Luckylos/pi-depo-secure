@@ -201,6 +201,22 @@ describe("encrypted Gist configuration sync", () => {
     expect(await readFile(join(target, "settings.json"), "utf8")).toBe("old");
   });
 
+  it("creates a new Gist when createNew is explicit even with an existing local Gist", async () => {
+    const source = await root();
+    await writeFile(join(source, "settings.json"), "source");
+    const client = new MultiMemoryGist();
+    await setupSync({ agentDir: source, passphrase, client, settings: settings(), createNew: true });
+    const result = await setupSync({ agentDir: source, passphrase, client, settings: settings("gist-1"), createNew: true });
+    expect(result.gistId).toBe("gist-2");
+    expect(client.value).toHaveLength(2);
+  });
+
+  it("rejects backup directories outside the Pi backup root", async () => {
+    const source = await root();
+    const outside = await root();
+    await expect(restoreBackup({ agentDir: source, backupPath: outside, passphrase })).rejects.toThrow(/outside the Pi backup directory/i);
+  });
+
   it("rolls back configuration when explicit package sync fails", async () => {
     const source = await root();
     const target = await root();

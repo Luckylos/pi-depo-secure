@@ -29,7 +29,6 @@
     "prepack": "npm run build"
   },
   "dependencies": {
-    "@types/prompts": "^2.4.9",
     "citty": "^0.2.2",
     "consigliere": "^2.0.0",
     "deepmerge": "^4.3.1",
@@ -39,6 +38,7 @@
   },
   "devDependencies": {
     "@types/js-yaml": "^4.0.9",
+    "@types/prompts": "^2.4.9",
     "tsup": "^8.4.0",
     "typescript": "^5.8.0",
     "vitest": "^3.1.0",

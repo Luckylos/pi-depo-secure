@@ -1,7 +1,4 @@
-import { spawn } from "node:child_process";
-import { commandExists, runCommand } from "./process.js";
-
-export type GitHubAuthSource = "environment" | "keychain" | "gh" | "none";
+export type GitHubAuthSource = "keychain" | "none";
 
 export interface GitHubAuthStatus {
   authenticated: boolean;
@@ -14,11 +11,6 @@ export interface GitHubTokenStore {
   set(token: string): Promise<void>;
 }
 
-export function githubEnvironmentToken(env: NodeJS.ProcessEnv = process.env): string | undefined {
-  return [env.GITHUB_TOKEN, env.GH_TOKEN].find((value) => value?.trim())?.trim();
-}
-
-const LOGIN_ARGS = ["auth", "login", "--hostname", "github.com", "--git-protocol", "https", "--scopes", "gist", "--web"];
 const DEVICE_CODE_URL = "https://github.com/login/device/code";
 const ACCESS_TOKEN_URL = "https://github.com/login/oauth/access_token";
 const DEVICE_GRANT_TYPE = "urn:ietf:params:oauth:grant-type:device_code";
@@ -27,13 +19,9 @@ const KEYCHAIN_ACCOUNT = "github";
 const DEFAULT_SCOPE = "gist";
 const DEFAULT_TIMEOUT_MS = 10 * 60_000;
 
-export function githubLoginArgs(): string[] { return [...LOGIN_ARGS]; }
-
 export interface GitHubAuthDependencies {
   env?: NodeJS.ProcessEnv;
   tokenStore?: GitHubTokenStore;
-  commandExists?: typeof commandExists;
-  runCommand?: typeof runCommand;
   fetchImpl?: (input: string | URL, init?: RequestInit) => Promise<Response>;
   sleep?: (milliseconds: number) => Promise<void>;
   now?: () => number;
@@ -67,12 +55,14 @@ export function systemGitHubTokenStore(): GitHubTokenStore {
   };
 }
 
-function authUnavailableDetail(env: NodeJS.ProcessEnv, keychainError: boolean): string {
-  const keychain = keychainError ? " The system keychain is unavailable." : "";
-  const direct = env.PI_GITHUB_OAUTH_CLIENT_ID?.trim()
-    ? " Run /gist-sync auth to start the configured GitHub Device Flow."
-    : " Set PI_GITHUB_OAUTH_CLIENT_ID to enable the built-in Device Flow.";
-  return "GitHub authentication is unavailable. Install gh and run /gist-sync auth, set GITHUB_TOKEN or GH_TOKEN," + direct + keychain;
+function missingAuthDetail(env: NodeJS.ProcessEnv, keychainError: boolean): string {
+  if (keychainError) {
+    return "The system keychain is unavailable. Enable a supported credential store: macOS Keychain, Linux Secret Service, or Windows Credential Manager.";
+  }
+  if (!env.PI_GITHUB_OAUTH_CLIENT_ID?.trim()) {
+    return "No GitHub authorization found. Set PI_GITHUB_OAUTH_CLIENT_ID, then run /gist-sync auth.";
+  }
+  return "No GitHub authorization found. Run /gist-sync auth.";
 }
 
 async function tokenFromStore(store: GitHubTokenStore): Promise<string | undefined> {
@@ -80,71 +70,28 @@ async function tokenFromStore(store: GitHubTokenStore): Promise<string | undefin
   return token?.trim() || undefined;
 }
 
-async function tokenFromGh(
-  env: NodeJS.ProcessEnv,
-  checkCommand: typeof commandExists,
-  run: typeof runCommand,
-): Promise<string | undefined> {
-  if (!await checkCommand("gh", env)) return undefined;
-  const token = await run("gh", ["auth", "token", "--hostname", "github.com"], { timeoutMs: 10_000, env });
-  const value = token.stdout.toString("utf8").trim();
-  return token.exitCode === 0 && value ? value : undefined;
-}
-
 export async function githubAuthStatus(options: GitHubAuthDependencies = {}): Promise<GitHubAuthStatus> {
   const env = options.env ?? process.env;
-  const checkCommand = options.commandExists ?? commandExists;
-  const run = options.runCommand ?? runCommand;
   const store = options.tokenStore ?? systemGitHubTokenStore();
-
-  if (githubEnvironmentToken(env)) {
-    return { authenticated: true, source: "environment", detail: "GitHub token is available from the environment" };
-  }
-
-  let keychainError = false;
   try {
     if (await tokenFromStore(store)) {
-      return { authenticated: true, source: "keychain", detail: "GitHub token is available from the system keychain" };
+      return { authenticated: true, source: "keychain", detail: "GitHub token is available in the system keychain" };
     }
+    return { authenticated: false, source: "none", detail: missingAuthDetail(env, false) };
   } catch {
-    keychainError = true;
+    return { authenticated: false, source: "none", detail: missingAuthDetail(env, true) };
   }
-
-  if (!await checkCommand("gh", env)) {
-    return { authenticated: false, source: "none", detail: authUnavailableDetail(env, keychainError) };
-  }
-
-  const status = await run("gh", ["auth", "status", "--hostname", "github.com"], { timeoutMs: 10_000, env });
-  if (status.exitCode === 0) return { authenticated: true, source: "gh", detail: "GitHub CLI authentication is available" };
-
-  // Some gh versions can return a non-zero status while still returning a usable token.
-  if (await tokenFromGh(env, checkCommand, run)) {
-    return { authenticated: true, source: "gh", detail: "GitHub CLI token is available" };
-  }
-
-  return { authenticated: false, source: "gh", detail: "GitHub is not authenticated. Start the browser/device login flow with /gist-sync auth." };
 }
 
 export async function githubTokenFromAuth(options: GitHubAuthDependencies = {}): Promise<string> {
-  const env = options.env ?? process.env;
-  const checkCommand = options.commandExists ?? commandExists;
-  const run = options.runCommand ?? runCommand;
   const store = options.tokenStore ?? systemGitHubTokenStore();
-
-  const environmentToken = githubEnvironmentToken(env);
-  if (environmentToken) return environmentToken;
-
   try {
-    const keychainToken = await tokenFromStore(store);
-    if (keychainToken) return keychainToken;
+    const token = await tokenFromStore(store);
+    if (token) return token;
   } catch {
-    // Try the other supported credential source and report a redacted error below if none work.
+    throw new Error("The system keychain is unavailable. Enable a supported credential store, then run /gist-sync auth again.");
   }
-
-  const ghToken = await tokenFromGh(env, checkCommand, run);
-  if (ghToken) return ghToken;
-
-  throw new Error(authUnavailableDetail(env, false) + " Run /gist-sync auth first.");
+  throw new Error("No GitHub authorization found. Run /gist-sync auth.");
 }
 
 interface DeviceCodeResponse {
@@ -179,7 +126,7 @@ function deviceFlowError(code: string | undefined): Error {
     case "slow_down": return new Error("GitHub requested slower authorization polling");
     case "expired_token": return new Error("GitHub Device Flow code expired; run /gist-sync auth again");
     case "access_denied": return new Error("GitHub Device Flow authorization was denied");
-    case "incorrect_client_credentials": return new Error("GitHub OAuth client ID is invalid");
+    case "incorrect_client_credentials": return new Error("GitHub OAuth Client ID is invalid");
     default: return new Error("GitHub Device Flow authorization failed");
   }
 }
@@ -211,11 +158,11 @@ async function authenticateGithubDeviceFlow(options: GitHubLoginOptions, clientI
       body: new URLSearchParams({ client_id: clientId, device_code: device.device_code, grant_type: DEVICE_GRANT_TYPE }).toString(),
     });
     const token = await jsonResponse<AccessTokenResponse>(tokenResponse);
-    if (token.access_token) {
+    if (tokenResponse.ok && token.access_token) {
       try {
         await store.set(token.access_token);
       } catch {
-        throw new Error("GitHub authorization succeeded, but the access token could not be saved to the system keychain. Install a supported keychain or use GITHUB_TOKEN for this process.");
+        throw new Error("GitHub authorization succeeded, but the token could not be saved to the system keychain. Enable a supported credential store and run /gist-sync auth again.");
       }
       return { authenticated: true, source: "keychain", detail: "GitHub token stored in the system keychain" };
     }
@@ -236,65 +183,12 @@ async function authenticateGithubDeviceFlow(options: GitHubLoginOptions, clientI
 
 export async function authenticateGithub(options: GitHubLoginOptions = {}): Promise<GitHubAuthStatus> {
   const env = options.env ?? process.env;
-  const checkCommand = options.commandExists ?? commandExists;
   const before = await githubAuthStatus(options);
   if (before.authenticated) return before;
+  if (/system keychain is unavailable/i.test(before.detail)) throw new Error(before.detail);
 
-  const store = options.tokenStore ?? systemGitHubTokenStore();
   const clientId = (options.clientId ?? env.PI_GITHUB_OAUTH_CLIENT_ID)?.trim();
-  if (clientId) return authenticateGithubDeviceFlow(options, clientId, store);
-
-  if (before.source === "none") throw new Error(before.detail);
-
-  const usePseudoTerminal = await checkCommand("script", env);
-  const file = usePseudoTerminal ? "script" : "gh";
-  const args = usePseudoTerminal ? ["-qefc", "printf '\n' | gh auth login --hostname github.com --git-protocol https --scopes gist --web", "/dev/null"] : LOGIN_ARGS;
-  const output: string[] = [];
-  const result = await runStreamingCommand(file, args, {
-    input: usePseudoTerminal ? undefined : "\n",
-    timeoutMs: options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
-    env: { ...env, NO_COLOR: "1" },
-    onOutput: (chunk) => {
-      output.push(chunk);
-      options.onOutput?.(chunk);
-    },
-  });
-  if (result.exitCode !== 0) {
-    throw new Error("GitHub browser/device authentication failed. Run /gist-sync auth again and complete the web flow.");
-  }
-
-  const after = await githubAuthStatus(options);
-  if (!after.authenticated) throw new Error("GitHub browser/device authentication did not complete. Run /gist-sync auth again.");
-  return after;
-}
-
-interface StreamingCommandOptions {
-  env: NodeJS.ProcessEnv;
-  input?: string;
-  timeoutMs: number;
-  onOutput?: (chunk: string) => void;
-}
-
-async function runStreamingCommand(file: string, args: string[], options: StreamingCommandOptions): Promise<{ exitCode: number }> {
-  return new Promise((resolve) => {
-    const child = spawn(file, args, { env: options.env, shell: false, stdio: ["pipe", "pipe", "pipe"] });
-    let settled = false;
-    let timer: NodeJS.Timeout | undefined;
-    const finish = (exitCode: number) => {
-      if (settled) return;
-      settled = true;
-      if (timer) clearTimeout(timer);
-      resolve({ exitCode });
-    };
-    const forward = (chunk: Buffer) => options.onOutput?.(chunk.toString("utf8"));
-    child.stdout.on("data", forward);
-    child.stderr.on("data", forward);
-    child.on("error", () => finish(-1));
-    child.on("close", (exitCode) => finish(exitCode ?? -1));
-    if (options.input === undefined) child.stdin.end(); else child.stdin.end(options.input);
-    timer = setTimeout(() => {
-      child.kill("SIGTERM");
-      finish(-1);
-    }, options.timeoutMs);
-  });
+  if (!clientId) throw new Error("Set PI_GITHUB_OAUTH_CLIENT_ID, then run /gist-sync auth.");
+  const store = options.tokenStore ?? systemGitHubTokenStore();
+  return authenticateGithubDeviceFlow(options, clientId, store);
 }

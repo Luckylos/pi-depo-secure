@@ -20,9 +20,9 @@ Inside Pi, run:
 
     /gist-sync setup
 
-The guided setup checks GitHub authentication before asking for a passphrase. It first accepts GITHUB_TOKEN or GH_TOKEN, then a token stored in the system keychain, and finally the GitHub CLI when available. If none is available, it can run the built-in GitHub Device Flow without gh.
+The guided setup checks GitHub authentication before asking for a passphrase. It always uses the built-in GitHub Device Flow and stores the resulting token in the system credential manager. No GitHub CLI, pasted token, or environment token is required.
 
-### Built-in Device Flow without gh
+### GitHub Device Flow
 
 Create a GitHub OAuth App under Settings -> Developer settings -> OAuth Apps, enable Device Flow in that app's settings, and keep its public Client ID. The app only requests the gist scope. It does not need a client secret for Device Flow.
 
@@ -34,7 +34,7 @@ Then run:
 
     /gist-sync auth
 
-The terminal displays a GitHub verification URL and one-time code. Complete the authorization from any browser. The resulting access token is stored in the operating system credential manager through the package's keychain integration. It is not written to Pi settings, the Gist, logs, or command arguments. On a headless Linux host, a Secret Service-compatible keyring must be available; otherwise use GITHUB_TOKEN or GH_TOKEN for the current process.
+The terminal displays a GitHub verification URL and one-time code. Complete the authorization from any browser. The resulting access token is stored in the operating system credential manager through the package's keychain integration. It is not written to Pi settings, the Gist, logs, or command arguments. The same flow uses macOS Keychain, Linux Secret Service, or Windows Credential Manager. A supported system credential manager must be available on every host.
 
 If a matching Private Gist already exists, setup defaults to restoring it. It previews the remote diff, creates a local encrypted backup, and never uploads the new machine first. Use `--create` only when you explicitly want a new Gist. A new Gist is created only when no match exists or creation is explicitly selected.
 
@@ -74,6 +74,11 @@ Configuration setup does not create or push `pi-depo.yml`. Package operations re
 
 The extension must work without a global `pd` on PATH. Package actions use shared pi-depo code or the package-local CLI bundle.
 
+The package uses the cross-platform `keytar` integration for credential storage. If npm blocks its native install script, approve and rebuild it from the package directory:
+
+    npm install-scripts approve keytar
+    npm rebuild keytar
+
 ## Optional CLI
 
 The standalone CLI mirrors the extension for headless workflows:
@@ -93,6 +98,7 @@ The passphrase is never accepted as a normal command-line argument. For non-inte
 
 The fork keeps the existing pi-depo model and files:
 
+    /gist-sync auth
     pd login
     pd init
     pd push
@@ -115,7 +121,7 @@ A selected Private Gist may contain:
 - `pi-gist-sync.config.enc.json`, containing the encrypted Pi configuration snapshot;
 - unrelated files, which are preserved.
 
-The sync layer never writes a public Gist, stores a GitHub token, or stores the encryption passphrase.
+The sync layer never writes a public Gist or stores the encryption passphrase. GitHub tokens remain in the operating system credential manager only.
 
 ## Configuration scope
 
@@ -143,8 +149,8 @@ Pull is additive and overwrite-only by default. It does not delete local files a
 
 ## Security properties
 
-- GitHub tokens are resolved from `GITHUB_TOKEN`, `GH_TOKEN`, the system keychain, or `gh auth token`; they are never written to Pi configuration or the Gist.
-- The built-in GitHub Device Flow uses only a public OAuth Client ID and stores the resulting token in the system credential manager. The extension never asks users to paste a token.
+- GitHub authentication uses only the built-in Device Flow and the system credential manager; the extension never accepts pasted or environment tokens.
+- The Device Flow uses only a public OAuth Client ID and stores the resulting token in macOS Keychain, Linux Secret Service, or Windows Credential Manager.
 - Configuration payloads use scrypt and AES-256-GCM with a fresh salt and nonce per push.
 - API keys are never printed by the extension, CLI, manifest, diff, or errors.
 - `models.json`, `mcp.json`, and local sync settings are written with mode `600`.

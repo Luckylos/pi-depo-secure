@@ -7,6 +7,7 @@ export default defineConfig({
   outDir: "dist",
   splitting: false,
   sourcemap: true,
+  external: ["keytar"],
   banner: {
     js: "#!/usr/bin/env node",
   },

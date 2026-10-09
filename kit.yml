@@ -72,8 +72,10 @@ packages:
     rating: core
     type: custom
     steps:
-      clone: git clone {{source}} {{home}}/.pi/extensions/context-mode
-      build: cd {{home}}/.pi/extensions/context-mode && npm install && npm run build
+      clone: >-
+        git clone {{source}} {{home}}/.pi/extensions/context-mode
+      build: >-
+        cd {{home}}/.pi/extensions/context-mode && npm install && npm run build
     config_merge:
       target: "{{home}}/.pi/agent/mcp.json"
       json: |
@@ -81,7 +83,9 @@ packages:
           "mcpServers": {
             "context-mode": {
               "command": "node",
-              "args": ["{{home}}/.pi/extensions/context-mode/node_modules/context-mode/start.mjs"]
+              "args": [
+                "{{home}}/.pi/extensions/context-mode/node_modules/context-mode/start.mjs"
+              ]
             }
           }
         }
@@ -91,11 +95,13 @@ packages:
   pi-prompt-suggester:
     source: npm:@guwidoe/pi-prompt-suggester
     rating: disabled
-    reason: SLOW STARTUP (16 Claude API calls on session start) + SILENT AUTO-SUBMIT
+    reason: >-
+      SLOW STARTUP (16 Claude API calls on session start) + SILENT AUTO-SUBMIT
   pi-lens:
     source: npm:pi-lens
     rating: disabled
-    reason: Slows startup exponentially with big codebases, benefits not worth it
+    reason: >-
+      Slows startup exponentially with big codebases, benefits not worth it
   oh-pi:
     source: npm:@ifi/oh-pi
     rating: disabled
@@ -133,10 +139,13 @@ packages:
     rating: useful
     type: custom
     steps:
-      clone: git clone https://github.com/codejunkie99/agentic-stack {{home}}/.pi/extensions/agentic-stack
+      clone: >-
+        git clone https://github.com/codejunkie99/agentic-stack
+        {{home}}/.pi/extensions/agentic-stack
       build: >-
-        cd {{home}}/.pi/extensions/agentic-stack && uv venv .venv && uv pip install -r requirements.txt && uv run python
-        onboard.py
+        cd {{home}}/.pi/extensions/agentic-stack && uv venv .venv
+        && uv pip install -r requirements.txt
+        && uv run python onboard.py
     verify:
       check: test -d {{home}}/.pi/extensions/agentic-stack/.agent
       description: agentic-stack installed

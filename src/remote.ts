@@ -7,14 +7,13 @@ import type { RemoteProvider, PkitConfig } from "./types.js";
 import { loadConfig, saveConfig, remoteRawUrl, remoteApiUrl } from "./config.js";
 
 // ─── Token resolution ───────────────────────────────────────────
-// Tokens are resolved from the environment, the system keychain, or gh.
-// This module never persists or prints credentials.
-async function githubTokenFromCLI(): Promise<string> {
-  return githubTokenFromAuth();
+// GitHub authentication uses the direct Device Flow and the system keychain.
+async function githubTokenFromKeychain(): Promise<string> {
+  return await githubTokenFromAuth();
 }
 
 export async function tokenForProvider(provider: RemoteProvider): Promise<string> {
-  if (provider === "github") return await githubTokenFromCLI();
+  if (provider === "github") return await githubTokenFromKeychain();
   const fromEnvironment = process.env.CODEBERG_TOKEN;
   if (fromEnvironment?.trim()) return fromEnvironment.trim();
   throw new Error("Codeberg authentication requires CODEBERG_TOKEN");

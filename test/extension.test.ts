@@ -9,8 +9,7 @@ afterEach(async () => {
   delete process.env.PI_GIST_SYNC_PASSPHRASE;
   delete process.env.PI_CODING_AGENT_DIR;
   delete process.env.PI_DEPO_CLI_PATH;
-  delete process.env.GITHUB_TOKEN;
-  delete process.env.GH_TOKEN;
+  delete process.env.PI_GITHUB_OAUTH_CLIENT_ID;
   await Promise.all(roots.splice(0).map((value) => rm(value, { recursive: true, force: true })));
 });
 
@@ -25,9 +24,8 @@ describe("pi-gist-sync extension", () => {
     const notifications: string[] = [];
     register({ registerCommand(name, options) { expect(name).toBe("gist-sync"); command = options; } });
     expect(command).toBeDefined();
-    process.env.GITHUB_TOKEN = "test-token";
-    await command!.handler("auth", { hasUI: true, ui: { input: async () => undefined, confirm: async () => true, notify: (message: string) => notifications.push(message) } });
-    expect(notifications.at(-1)).toMatch(/authentication is ready/i);
+    await command!.handler("auth", { hasUI: false, ui: { input: async () => undefined, confirm: async () => true, notify: (message: string) => notifications.push(message) } });
+    expect(notifications.at(-1)).toMatch(/interactive|Device Flow|Client ID|keychain/i);
     await command!.handler("push", { hasUI: false, ui: { input: async () => undefined, confirm: async () => true, notify: (message: string) => notifications.push(message) } });
     expect(notifications.join("\n")).toMatch(/confirmation|interactive/i);
 

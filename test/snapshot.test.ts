@@ -34,6 +34,13 @@ describe("configuration snapshots", () => {
     await expect(collectSnapshot(root, ["secret"], [], { maxFileBytes: 2 })).rejects.toThrow(/size/i);
   });
 
+  const windowsOnly = process.platform === "win32" ? it : it.skip;
+  windowsOnly("accepts ordinary paths with Windows path separators", async () => {
+    const root = await tempRoot();
+    await writeFile(join(root, "settings.json"), "{}");
+    await expect(collectSnapshot(root, ["settings.json"])).resolves.toHaveLength(1);
+  });
+
   it("computes content and mode changes without revealing contents", async () => {
     const root = await tempRoot();
     await writeFile(join(root, "same"), "same");

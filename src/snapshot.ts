@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { lstat, mkdir, mkdtemp, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { normalizeSnapshotEntries, type SnapshotEntry, snapshotLimits } from "./crypto.js";
 
 export interface SnapshotLimits { maxFileBytes?: number; maxTotalBytes?: number }
@@ -15,9 +15,10 @@ function validateRelativePath(value: string): void {
 
 function resolveInside(root: string, value: string): string {
   validateRelativePath(value);
-  const candidate = resolve(root, value);
-  const rootWithSlash = resolve(root) + "/";
-  if (candidate !== resolve(root) && !candidate.startsWith(rootWithSlash)) throw new SnapshotSecurityError("Path escapes snapshot root");
+  const resolvedRoot = resolve(root);
+  const candidate = resolve(resolvedRoot, value);
+  const relativePath = relative(resolvedRoot, candidate);
+  if (isAbsolute(relativePath) || relativePath === ".." || relativePath.startsWith(".." + sep)) throw new SnapshotSecurityError("Path escapes snapshot root");
   return candidate;
 }
 

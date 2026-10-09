@@ -8,12 +8,12 @@ import { loadConfig, saveConfig, remoteRawUrl, remoteApiUrl } from "./config.js"
 
 // ─── Token resolution ───────────────────────────────────────────
 // GitHub authentication uses the direct Device Flow and the local credential store.
-async function githubTokenFromKeychain(): Promise<string> {
+async function githubTokenFromCredentialStore(): Promise<string> {
   return await githubTokenFromAuth();
 }
 
 export async function tokenForProvider(provider: RemoteProvider): Promise<string> {
-  if (provider === "github") return await githubTokenFromKeychain();
+  if (provider === "github") return await githubTokenFromCredentialStore();
   const fromEnvironment = process.env.CODEBERG_TOKEN;
   if (fromEnvironment?.trim()) return fromEnvironment.trim();
   throw new Error("Codeberg authentication requires CODEBERG_TOKEN");

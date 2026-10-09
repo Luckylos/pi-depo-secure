@@ -34,7 +34,16 @@ Then run:
 
     /gist-sync auth
 
-The terminal displays a GitHub verification URL and one-time code. Complete the authorization from any browser. The resulting access token is stored through the package's local credential store. When available, it uses macOS Keychain, Linux Secret Service, or Windows Credential Manager. Otherwise it uses an AES-256-GCM encrypted file in the user's config directory with restrictive file permissions. It is not written to Pi settings, the Gist, logs, or command arguments.
+The terminal displays a GitHub verification URL and one-time code. Complete the authorization from any browser. The resulting access token is always stored as an AES-256-GCM encrypted file in the current user's standard config directory. No native module, system package, elevated permission, or keychain setup is required. It is not written to Pi settings, the Gist, logs, or command arguments.
+
+Credential files are stored outside the Pi agent directory and are never included in Gist Sync:
+
+    macOS:  ~/Library/Application Support/pi-depo-secure/github-token.enc
+    Linux:  $XDG_CONFIG_HOME/pi-depo-secure/github-token.enc
+            or ~/.config/pi-depo-secure/github-token.enc
+    Windows: %APPDATA%\pi-depo-secure\github-token.enc
+
+The directory also contains a separate random encryption key file named github-token.key. On POSIX systems the directory is mode 700 and both files are mode 600. Windows uses the current user's profile permissions.
 
 If a matching Private Gist already exists, setup defaults to restoring it. It previews the remote diff, creates a local encrypted backup, and never uploads the new machine first. Use `--create` only when you explicitly want a new Gist. A new Gist is created only when no match exists or creation is explicitly selected.
 
@@ -74,7 +83,7 @@ Configuration setup does not create or push `pi-depo.yml`. Package operations re
 
 The extension must work without a global `pd` on PATH. Package actions use shared pi-depo code or the package-local CLI bundle.
 
-The package can use the cross-platform `keytar` integration for native credential storage, but it is optional. If npm blocks its native install script, no approval is required: the package automatically uses its encrypted user-local credential store instead.
+Credential storage uses only Node built-ins and the current user's config directory. Package installation does not run native credential-store scripts.
 
 ## Optional CLI
 
@@ -118,7 +127,7 @@ A selected Private Gist may contain:
 - `pi-gist-sync.config.enc.json`, containing the encrypted Pi configuration snapshot;
 - unrelated files, which are preserved.
 
-The sync layer never writes a public Gist or stores the encryption passphrase. GitHub tokens remain in the native credential manager when available, or in the encrypted user-local credential store.
+The sync layer never writes a public Gist or stores the encryption passphrase. GitHub tokens remain in the encrypted user-local credential store.
 
 ## Configuration scope
 
@@ -147,7 +156,7 @@ Pull is additive and overwrite-only by default. It does not delete local files a
 ## Security properties
 
 - GitHub authentication uses only the built-in Device Flow; the extension never accepts pasted or environment tokens.
-- The Device Flow uses only a public OAuth Client ID and stores the resulting token in a native credential manager when available, or an AES-256-GCM encrypted user-local file.
+- The Device Flow uses only a public OAuth Client ID and stores the resulting token in an AES-256-GCM encrypted user-local file.
 - Configuration payloads use scrypt and AES-256-GCM with a fresh salt and nonce per push.
 - API keys are never printed by the extension, CLI, manifest, diff, or errors.
 - `models.json`, `mcp.json`, and local sync settings are written with mode `600`.

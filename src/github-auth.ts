@@ -1,4 +1,4 @@
-import { portableGitHubTokenStore } from "./credential-store.js";
+import { portableGitHubTokenStore, type PortableGitHubTokenStoreOptions } from "./credential-store.js";
 
 export type GitHubAuthSource = "credential-store" | "none";
 
@@ -16,11 +16,6 @@ export interface GitHubTokenStore {
 const DEVICE_CODE_URL = "https://github.com/login/device/code";
 const ACCESS_TOKEN_URL = "https://github.com/login/oauth/access_token";
 const DEVICE_GRANT_TYPE = "urn:ietf:params:oauth:grant-type:device_code";
-const KEYCHAIN_SERVICE = "pi-depo-secure/github";
-const KEYCHAIN_ACCOUNT = "github";
-const DEFAULT_SCOPE = "gist";
-const DEFAULT_TIMEOUT_MS = 10 * 60_000;
-
 export interface GitHubAuthDependencies {
   env?: NodeJS.ProcessEnv;
   tokenStore?: GitHubTokenStore;
@@ -28,6 +23,7 @@ export interface GitHubAuthDependencies {
   sleep?: (milliseconds: number) => Promise<void>;
   now?: () => number;
   clientId?: string;
+  credentialDirectory?: string;
 }
 
 export interface GitHubLoginOptions extends GitHubAuthDependencies {
@@ -35,57 +31,11 @@ export interface GitHubLoginOptions extends GitHubAuthDependencies {
   timeoutMs?: number;
 }
 
-let keytarPromise: Promise<typeof import("keytar")> | undefined;
+const DEFAULT_SCOPE = "gist";
+const DEFAULT_TIMEOUT_MS = 10 * 60_000;
 
-async function loadKeytar(): Promise<typeof import("keytar")> {
-  keytarPromise ??= import("keytar");
-  return keytarPromise;
-}
-
-export function systemGitHubTokenStore(): GitHubTokenStore {
-  return {
-    async get(): Promise<string | undefined> {
-      const keytar = await loadKeytar();
-      const token = await keytar.getPassword(KEYCHAIN_SERVICE, KEYCHAIN_ACCOUNT);
-      return token?.trim() || undefined;
-    },
-    async set(token: string): Promise<void> {
-      if (!token.trim()) throw new Error("Cannot store an empty GitHub token");
-      const keytar = await loadKeytar();
-      await keytar.setPassword(KEYCHAIN_SERVICE, KEYCHAIN_ACCOUNT, token);
-    },
-  };
-}
-
-export function defaultGitHubTokenStore(): GitHubTokenStore {
-  const portable = portableGitHubTokenStore();
-  let selected: GitHubTokenStore | undefined;
-  const select = async (): Promise<GitHubTokenStore> => {
-    if (selected) return selected;
-    const system = systemGitHubTokenStore();
-    try {
-      await system.get();
-      selected = system;
-    } catch {
-      selected = portable;
-    }
-    return selected;
-  };
-  return {
-    async get(): Promise<string | undefined> {
-      return (await select()).get();
-    },
-    async set(token: string): Promise<void> {
-      const store = await select();
-      try {
-        await store.set(token);
-      } catch (error) {
-        if (store === portable) throw error;
-        selected = portable;
-        await portable.set(token);
-      }
-    },
-  };
+export function defaultGitHubTokenStore(options: PortableGitHubTokenStoreOptions = {}): GitHubTokenStore {
+  return portableGitHubTokenStore(options);
 }
 
 function missingAuthDetail(env: NodeJS.ProcessEnv, storeError: boolean): string {
@@ -105,7 +55,7 @@ async function tokenFromStore(store: GitHubTokenStore): Promise<string | undefin
 
 export async function githubAuthStatus(options: GitHubAuthDependencies = {}): Promise<GitHubAuthStatus> {
   const env = options.env ?? process.env;
-  const store = options.tokenStore ?? defaultGitHubTokenStore();
+  const store = options.tokenStore ?? defaultGitHubTokenStore({ directory: options.credentialDirectory });
   try {
     if (await tokenFromStore(store)) {
       return { authenticated: true, source: "credential-store", detail: "GitHub token is available in the local credential store" };

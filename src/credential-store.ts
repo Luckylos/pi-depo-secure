@@ -1,7 +1,8 @@
 import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
 import { chmod, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
-import { homedir, platform } from "node:os";
-import { join } from "node:path";
+import { platform } from "node:os";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import type { GitHubTokenStore } from "./github-auth.js";
 
 const KEY_FILE = "github-token.key";
@@ -23,10 +24,10 @@ export interface PortableGitHubTokenStoreOptions {
   directory?: string;
 }
 
-export function defaultGitHubCredentialDirectory(env: NodeJS.ProcessEnv = process.env): string {
-  if (platform() === "win32") return join(env.APPDATA ?? join(homedir(), "AppData", "Roaming"), "pi-depo-secure");
-  if (platform() === "darwin") return join(homedir(), "Library", "Application Support", "pi-depo-secure");
-  return join(env.XDG_CONFIG_HOME ?? join(homedir(), ".config"), "pi-depo-secure");
+const PACKAGE_ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
+
+export function defaultGitHubCredentialDirectory(): string {
+  return join(dirname(PACKAGE_ROOT), ".pi-depo-secure-auth");
 }
 
 async function ensureDirectory(directory: string): Promise<void> {

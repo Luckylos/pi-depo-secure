@@ -36,14 +36,12 @@ Then run:
 
 The terminal displays a GitHub verification URL and one-time code. Complete the authorization from any browser. The resulting access token is always stored as an AES-256-GCM encrypted file in the current user's standard config directory. No native module, system package, elevated permission, or keychain setup is required. It is not written to Pi settings, the Gist, logs, or command arguments.
 
-Credential files are stored outside the Pi agent directory and are never included in Gist Sync:
+Credential files are stored beside the plugin checkout, outside the Pi agent directory and never included in Gist Sync:
 
-    macOS:  ~/Library/Application Support/pi-depo-secure/github-token.enc
-    Linux:  $XDG_CONFIG_HOME/pi-depo-secure/github-token.enc
-            or ~/.config/pi-depo-secure/github-token.enc
-    Windows: %APPDATA%\pi-depo-secure\github-token.enc
+    <plugin-parent>/.pi-depo-secure-auth/github-token.enc
+    <plugin-parent>/.pi-depo-secure-auth/github-token.key
 
-The directory also contains a separate random encryption key file named github-token.key. On POSIX systems the directory is mode 700 and both files are mode 600. Windows uses the current user's profile permissions.
+The plugin parent is the user-owned directory containing the installed Git checkout for pi-depo-secure. Keeping the data beside, rather than inside, the checkout prevents Pi's `git clean -fdx` update step from deleting it. On POSIX systems it is mode 700 and both files are mode 600. Windows uses the current user's profile permissions. Removing the plugin leaves these credentials in place for a later reinstall.
 
 If a matching Private Gist already exists, setup defaults to restoring it. It previews the remote diff, creates a local encrypted backup, and never uploads the new machine first. Use `--create` only when you explicitly want a new Gist. A new Gist is created only when no match exists or creation is explicitly selected.
 

@@ -29,9 +29,9 @@ describe("portable GitHub credential store", () => {
   });
 
   it("uses the platform user configuration directory", () => {
-    const directory = defaultGitHubCredentialDirectory({ APPDATA: "C:\\Users\\test\\AppData\\Roaming", XDG_CONFIG_HOME: "/tmp/test-xdg" });
-    expect(directory).toMatch(/pi-depo-secure$/);
-    expect(directory).not.toContain(".pi");
+    const directory = defaultGitHubCredentialDirectory();
+    expect(directory).toMatch(/[/\\]\.pi-depo-secure-auth$/);
+    expect(directory).not.toMatch(/[/\\](?:dist|src|node_modules)[/\\]/);
   });
 
   it("makes the direct auth store use the requested directory", async () => {

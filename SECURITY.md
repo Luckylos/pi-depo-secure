@@ -24,8 +24,8 @@ The fork writes only pi-gist-sync.manifest.json and pi-gist-sync.config.enc.json
 - Keep PI_GIST_SYNC_PASSPHRASE out of shell history, process listings, and shared logs.
 - Use the built-in `/gist-sync auth` Device Flow. The flow can be completed from another browser when the CLI host has no browser.
 - Create the OAuth App with Device Flow enabled and expose only its public Client ID through `PI_GITHUB_OAUTH_CLIENT_ID`; never distribute an OAuth client secret.
-- Credential files are stored outside the Pi agent directory: `~/Library/Application Support/pi-depo-secure/` on macOS, `$XDG_CONFIG_HOME/pi-depo-secure/` or `~/.config/pi-depo-secure/` on Linux, and `%APPDATA%\pi-depo-secure\` on Windows.
-- The credential file is AES-256-GCM encrypted and accompanied by a separate random key file. The directory and files are user-private; this requires no system package or elevated install permission. It has weaker isolation from a process already running as the same user than a native credential manager.
+- Credential files are stored beside the installed plugin checkout at `.pi-depo-secure-auth/github-token.enc` and `.pi-depo-secure-auth/github-token.key`, outside the Pi agent directory and excluded from Git. Keeping them beside the checkout prevents Pi's `git clean -fdx` update step from deleting them.
+- The credential file is AES-256-GCM encrypted and accompanied by a separate random key file. The directory and files are user-private; this requires no system package or elevated install permission. It has weaker isolation from a process already running as the same user than a native credential manager. Removing the plugin leaves the files in place for a later reinstall.
 - Review `/gist-sync diff` before every restore; a first-run setup with an existing Gist restores by default and never overwrites the remote snapshot.
 - Use `pd gist-sync diff` only in headless CLI workflows.
 - Do not enable --prune on a host containing unmanaged Pi files.

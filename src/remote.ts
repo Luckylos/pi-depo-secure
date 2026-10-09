@@ -1,5 +1,5 @@
 import { runCommand } from "./process.js"
-import { githubEnvironmentToken } from "./github-auth.js";
+import { githubTokenFromAuth } from "./github-auth.js";
 import { join } from "node:path";
 import { readFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
@@ -7,23 +7,14 @@ import type { RemoteProvider, PkitConfig } from "./types.js";
 import { loadConfig, saveConfig, remoteRawUrl, remoteApiUrl } from "./config.js";
 
 // ─── Token resolution ───────────────────────────────────────────
-// Tokens are deliberately never persisted by this fork. Prefer environment variables,
-// then read the credential from gh without invoking a shell.
+// Tokens are resolved from the environment, the system keychain, or gh.
+// This module never persists or prints credentials.
 async function githubTokenFromCLI(): Promise<string> {
-  const status = await runCommand("gh", ["auth", "status"], { timeoutMs: 10_000 });
-  if (status.exitCode !== 0) throw new Error("GitHub CLI is not authenticated. Run: pd gist-sync auth");
-  const token = await runCommand("gh", ["auth", "token"], { timeoutMs: 10_000 });
-  const value = token.stdout.toString("utf8").trim();
-  if (token.exitCode !== 0 || !value) throw new Error("Could not retrieve a GitHub token. Run: pd gist-sync auth");
-  return value;
+  return githubTokenFromAuth();
 }
 
 export async function tokenForProvider(provider: RemoteProvider): Promise<string> {
-  if (provider === "github") {
-    const fromEnvironment = githubEnvironmentToken();
-    if (fromEnvironment) return fromEnvironment;
-    return await githubTokenFromCLI();
-  }
+  if (provider === "github") return await githubTokenFromCLI();
   const fromEnvironment = process.env.CODEBERG_TOKEN;
   if (fromEnvironment?.trim()) return fromEnvironment.trim();
   throw new Error("Codeberg authentication requires CODEBERG_TOKEN");

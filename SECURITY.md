@@ -6,7 +6,7 @@ The encrypted configuration file is designed to protect Pi configuration content
 
 ## Credentials
 
-The passphrase is not stored in the Gist or in pi-gist-sync.json. The GitHub token is not stored in ~/.pkit/config.yml. Use a fine-grained token with only Gist access when an environment token is necessary.
+The passphrase is not stored in the Gist or in pi-gist-sync.json. The GitHub token is not stored in ~/.pkit/config.yml, Pi settings, or the Gist. Device Flow tokens are stored only in the operating system credential manager. Use a fine-grained token with only Gist access when an environment token is necessary.
 
 The synchronized models.json may contain provider API keys. Treat the passphrase and every host that receives the decrypted file as sensitive.
 
@@ -22,8 +22,10 @@ The fork writes only pi-gist-sync.manifest.json and pi-gist-sync.config.enc.json
 
 - Use a Private Gist.
 - Keep PI_GIST_SYNC_PASSPHRASE out of shell history, process listings, and shared logs.
-- Prefer the guided `/gist-sync auth` web/device flow over long-lived environment tokens. The flow can be completed from another browser when the CLI host has no browser.
-- If `gh` is not installed, install it through the host operating system and rerun the guided auth flow; the extension never installs system packages.
+- Prefer the built-in `/gist-sync auth` Device Flow when `PI_GITHUB_OAUTH_CLIENT_ID` is configured. The flow can be completed from another browser when the CLI host has no browser.
+- Create the OAuth App with Device Flow enabled and expose only its public Client ID through `PI_GITHUB_OAUTH_CLIENT_ID`; never distribute an OAuth client secret.
+- The keychain path requires an operating system credential manager. On a headless Linux host without Secret Service, use `GITHUB_TOKEN` or `GH_TOKEN` for the current process.
+- The GitHub CLI remains a supported fallback; the extension never installs system packages.
 - Review `/gist-sync diff` before every restore; a first-run setup with an existing Gist restores by default and never overwrites the remote snapshot.
 - Use `pd gist-sync diff` only in headless CLI workflows.
 - Do not enable --prune on a host containing unmanaged Pi files.

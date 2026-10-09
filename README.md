@@ -20,7 +20,21 @@ Inside Pi, run:
 
     /gist-sync setup
 
-The guided setup checks GitHub authentication before asking for a passphrase. If GitHub is not authenticated, it starts the official web/device flow: the terminal or Pi shows a GitHub device URL and one-time code, which can be completed from any browser.
+The guided setup checks GitHub authentication before asking for a passphrase. It first accepts GITHUB_TOKEN or GH_TOKEN, then a token stored in the system keychain, and finally the GitHub CLI when available. If none is available, it can run the built-in GitHub Device Flow without gh.
+
+### Built-in Device Flow without gh
+
+Create a GitHub OAuth App under Settings -> Developer settings -> OAuth Apps, enable Device Flow in that app's settings, and keep its public Client ID. The app only requests the gist scope. It does not need a client secret for Device Flow.
+
+Set the Client ID on the Pi host before starting Pi or running the CLI:
+
+    export PI_GITHUB_OAUTH_CLIENT_ID=your_public_client_id
+
+Then run:
+
+    /gist-sync auth
+
+The terminal displays a GitHub verification URL and one-time code. Complete the authorization from any browser. The resulting access token is stored in the operating system credential manager through the package's keychain integration. It is not written to Pi settings, the Gist, logs, or command arguments. On a headless Linux host, a Secret Service-compatible keyring must be available; otherwise use GITHUB_TOKEN or GH_TOKEN for the current process.
 
 If a matching Private Gist already exists, setup defaults to restoring it. It previews the remote diff, creates a local encrypted backup, and never uploads the new machine first. Use `--create` only when you explicitly want a new Gist. A new Gist is created only when no match exists or creation is explicitly selected.
 
@@ -129,8 +143,8 @@ Pull is additive and overwrite-only by default. It does not delete local files a
 
 ## Security properties
 
-- GitHub tokens are read from `gh auth token`, `GITHUB_TOKEN`, or `GH_TOKEN` and are not persisted by this package.
-- GitHub authentication uses the official `gh` web/device flow; the extension never asks users to paste or stores a token.
+- GitHub tokens are resolved from `GITHUB_TOKEN`, `GH_TOKEN`, the system keychain, or `gh auth token`; they are never written to Pi configuration or the Gist.
+- The built-in GitHub Device Flow uses only a public OAuth Client ID and stores the resulting token in the system credential manager. The extension never asks users to paste a token.
 - Configuration payloads use scrypt and AES-256-GCM with a fresh salt and nonce per push.
 - API keys are never printed by the extension, CLI, manifest, diff, or errors.
 - `models.json`, `mcp.json`, and local sync settings are written with mode `600`.

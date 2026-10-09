@@ -1,6 +1,6 @@
 {
   "name": "pi-depo-secure",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "Secure Pi package manager fork with encrypted GitHub Gist configuration sync",
   "keywords": [
     "pi-package",
@@ -38,11 +38,11 @@
   },
   "devDependencies": {
     "@types/js-yaml": "^4.0.9",
+    "@types/node": "^22.15.0",
     "@types/prompts": "^2.4.9",
     "tsup": "^8.4.0",
     "typescript": "^5.8.0",
-    "vitest": "^3.1.0",
-    "@types/node": "^22.15.0"
+    "vitest": "^3.1.0"
   },
   "engines": {
     "node": ">=22.19.0"
@@ -60,5 +60,8 @@
   },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*"
+  },
+  "optionalDependencies": {
+    "keytar": "^7.9.0"
   }
 }

@@ -1,8 +1,9 @@
+
 import { afterEach, describe, expect, it } from "vitest";
 import { mkdtemp, readFile, rm, mkdir, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
-import { DEFAULT_INCLUDE, doctorSync, ensurePiDepoProfile, fetchConfig, previewConfig, pushConfig, restoreBackup, setupSync, type SyncSettings } from "../src/config-sync.js";
+import { DEFAULT_INCLUDE, discoverSyncGists, doctorSync, ensurePiDepoProfile, fetchConfig, previewConfig, pushConfig, restoreBackup, restoreExistingGist, setupSync, type SyncSettings } from "../src/config-sync.js";
 import type { GistResponse } from "../src/gist-remote.js";
 
 class MemoryGist {
@@ -20,11 +21,34 @@ class MemoryGist {
   async get(id: string): Promise<GistResponse> { if (!this.value || this.value.id !== id) throw new Error("missing gist"); return this.value; }
 }
 
+class MultiMemoryGist {
+  value: GistResponse[] = [];
+  async list(): Promise<GistResponse[]> { return this.value; }
+  async create(description: string, isPublic: boolean, files: Record<string, string>): Promise<GistResponse> {
+    const gist = { id: `gist-${this.value.length + 1}`, description, public: isPublic, files: Object.fromEntries(Object.entries(files).map(([filename, content]) => [filename, { filename, content }])) };
+    this.value.push(gist);
+    return gist;
+  }
+  async update(id: string, files: Record<string, string>): Promise<GistResponse> {
+    const current = this.value.find((gist) => gist.id === id);
+    if (!current) throw new Error("missing gist");
+    const updated = { ...current, files: { ...current.files, ...Object.fromEntries(Object.entries(files).map(([filename, content]) => [filename, { filename, content }])) } };
+    this.value = this.value.map((gist) => gist.id === id ? updated : gist);
+    return updated;
+  }
+  async get(id: string): Promise<GistResponse> {
+    const current = this.value.find((gist) => gist.id === id);
+    if (!current) throw new Error("missing gist");
+    return current;
+  }
+}
+
 const roots: string[] = [];
 async function root() { const value = await mkdtemp(join(tmpdir(), "pi-gist-sync-test-")); roots.push(value); return value; }
 const settings = (gistId?: string): SyncSettings => ({ schemaVersion: 1, gistId, profile: "test", description: "pi-gist-sync-test", public: false, include: ["settings.json", "models.json", "agents"], exclude: [], prune: false, piDepo: { enabled: false, autoPush: false, autoSync: false } });
 afterEach(async () => {
   delete process.env.PI_DEPO_CLI_PATH;
+  await rm(join(homedir(), ".pkit"), { recursive: true, force: true });
   await Promise.all(roots.splice(0).map((value) => rm(value, { recursive: true, force: true })));
 });
 
@@ -40,21 +64,41 @@ describe("encrypted Gist configuration sync", () => {
     expect(result.config.profiles?.default).not.toHaveProperty("auth");
   });
 
-  it("runs package-layer initialization after configuration setup", async () => {
+  it("keeps package-layer writes out of configuration setup", async () => {
     const source = await root();
     await writeFile(join(source, "settings.json"), "source");
     const client = new MemoryGist();
     const packageCalls: string[] = [];
-    const packageConfig = {
-      load: async () => ({}),
-      save: async () => { packageCalls.push("profile"); },
-    };
-
+    const packageConfig = { load: async () => ({}), save: async () => { packageCalls.push("profile"); } };
     await setupSync({
       agentDir: source,
       passphrase,
       client,
       settings: settings(),
+      packageConfig,
+      packageSetup: async (gistId, profile) => { packageCalls.push("setup:" + gistId + ":" + profile); },
+    });
+
+    expect(packageCalls).toEqual([]);
+  });
+
+  it("allows package-layer initialization only when explicitly requested", async () => {
+    const source = await root();
+    await writeFile(join(source, "settings.json"), "source");
+    const client = new MemoryGist();
+    const packageCalls: string[] = [];
+    const packageConfig = { load: async () => ({}), save: async () => { packageCalls.push("profile"); } };
+
+    const fakeCli = join(source, "successful-pd.mjs");
+    await writeFile(fakeCli, "process.exit(0)");
+    process.env.PI_DEPO_CLI_PATH = fakeCli;
+
+    await setupSync({
+      agentDir: source,
+      passphrase,
+      client,
+      settings: { ...settings(), piDepo: { ...settings().piDepo, enabled: true } },
+      syncPackages: true,
       packageConfig,
       packageSetup: async (gistId, profile) => { packageCalls.push("setup:" + gistId + ":" + profile); },
     });
@@ -69,8 +113,8 @@ describe("encrypted Gist configuration sync", () => {
   it("previews setup, creates a private Gist, persists its identity, and passes doctor", async () => {
     const source = await root();
     await mkdir(join(source, "agents"));
-    await writeFile(join(source, "settings.json"), "{\"packages\":[]}");
-    await writeFile(join(source, "models.json"), "{\"apiKey\":\"do-not-leak\"}", { mode: 0o600 });
+    await writeFile(join(source, "settings.json"), '{\"packages\":[]}');
+    await writeFile(join(source, "models.json"), '{\"apiKey\":\"do-not-leak\"}', { mode: 0o600 });
     const client = new MemoryGist();
 
     const preview = await previewConfig({ agentDir: source, passphrase, client, settings: settings() });
@@ -88,17 +132,36 @@ describe("encrypted Gist configuration sync", () => {
     expect(JSON.stringify(client.value)).not.toContain("do-not-leak");
   });
 
-  it("reuses a matching private Gist discovered through the client", async () => {
+  it("discovers an existing private Gist without writing to it", async () => {
     const source = await root();
     const second = await root();
     await writeFile(join(source, "settings.json"), "source");
     await writeFile(join(second, "settings.json"), "second");
     const client = new MemoryGist();
     await setupSync({ agentDir: source, passphrase, client, settings: settings(), packageConfig: isolatedPackageConfig, packageSetup: async () => {} });
-    const result = await setupSync({ agentDir: second, passphrase, client, settings: settings(), packageConfig: isolatedPackageConfig, packageSetup: async () => {} });
-    expect(result.created).toBe(false);
-    expect(result.reused).toBe(true);
-    expect(result.gistId).toBe("gist-1");
+    const before = JSON.stringify(client.value);
+    await expect(setupSync({ agentDir: second, passphrase, client, settings: settings(), packageConfig: isolatedPackageConfig })).rejects.toThrow(/existing private Gist/i);
+    expect(JSON.stringify(client.value)).toBe(before);
+    const matches = await discoverSyncGists({ agentDir: second, client, settings: settings() });
+    expect(matches.map((gist) => gist.id)).toEqual(["gist-1"]);
+    const restored = await restoreExistingGist({ agentDir: second, passphrase, client, settings: settings(), gistId: "gist-1" });
+    expect(restored.gistId).toBe("gist-1");
+    expect(await readFile(join(second, "settings.json"), "utf8")).toBe("source");
+    expect(JSON.stringify(client.value)).toBe(before);
+  });
+
+  it("creates a new Gist only when explicitly requested", async () => {
+    const first = await mkdtemp(join(tmpdir(), "pi-gist-create-first-"));
+    const second = await mkdtemp(join(tmpdir(), "pi-gist-create-second-"));
+    roots.push(first, second);
+    await writeFile(join(first, "settings.json"), JSON.stringify({ source: "first" }));
+    await writeFile(join(second, "settings.json"), JSON.stringify({ source: "second" }));
+    const client = new MultiMemoryGist();
+    await setupSync({ agentDir: first, passphrase, client, settings: settings(), packageConfig: isolatedPackageConfig });
+    const result = await setupSync({ agentDir: second, passphrase, client, settings: settings(), createNew: true, packageConfig: isolatedPackageConfig });
+    expect(result.created).toBe(true);
+    expect(result.gistId).not.toBe("gist-1");
+    expect(client.value).toHaveLength(2);
   });
 
   it("reports a failed package status command in doctor", async () => {
@@ -121,8 +184,8 @@ describe("encrypted Gist configuration sync", () => {
     const source = await root();
     const target = await root();
     await mkdir(join(source, "agents"));
-    await writeFile(join(source, "settings.json"), "{\"packages\":[]}");
-    await writeFile(join(source, "models.json"), "{\"apiKey\":\"do-not-leak\"}", { mode: 0o600 });
+    await writeFile(join(source, "settings.json"), '{\"packages\":[]}');
+    await writeFile(join(source, "models.json"), '{\"apiKey\":\"do-not-leak\"}', { mode: 0o600 });
     await writeFile(join(source, "agents", "verifier.md"), "safe");
     const client = new MemoryGist();
     const pushed = await pushConfig({ agentDir: source, passphrase, client, settings: settings() });

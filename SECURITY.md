@@ -22,7 +22,9 @@ The fork writes only pi-gist-sync.manifest.json and pi-gist-sync.config.enc.json
 
 - Use a Private Gist.
 - Keep PI_GIST_SYNC_PASSPHRASE out of shell history, process listings, and shared logs.
-- Prefer gh auth login --scopes gist over long-lived environment tokens.
-- Review `/gist-sync diff` before every restore; use `pd gist-sync diff` only in headless CLI workflows.
+- Prefer the guided `/gist-sync auth` web/device flow over long-lived environment tokens. The flow can be completed from another browser when the CLI host has no browser.
+- If `gh` is not installed, install it through the host operating system and rerun the guided auth flow; the extension never installs system packages.
+- Review `/gist-sync diff` before every restore; a first-run setup with an existing Gist restores by default and never overwrites the remote snapshot.
+- Use `pd gist-sync diff` only in headless CLI workflows.
 - Do not enable --prune on a host containing unmanaged Pi files.
-- Pin package sources and review third-party Pi extensions before installing them.
+- Pin package sources and review third-party Pi extensions before installing them. Package synchronization is explicit and is not part of configuration setup.

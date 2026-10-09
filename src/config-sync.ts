@@ -200,11 +200,20 @@ async function resolveClient(client?: GistClientLike): Promise<GistClientLike> {
   return new GistClient(await tokenForProvider("github"));
 }
 
-export async function findMatchingGist(client: GistClientLike, settings: SyncSettings): Promise<GistResponse | undefined> {
-  if (!client.list) return undefined;
+export async function findMatchingGists(client: GistClientLike, settings: SyncSettings): Promise<GistResponse[]> {
+  if (!client.list) return [];
   const gists = await client.list();
   const owned = (gist: GistResponse): boolean => Boolean(gist.files?.[SYNC_MANIFEST_FILE] || gist.files?.[SYNC_CONFIG_FILE]);
-  return gists.find((gist) => gist.public === false && (gist.description === settings.description || owned(gist)));
+  return gists.filter((gist) => gist.public === false && (gist.description === settings.description || owned(gist)));
+}
+
+export async function findMatchingGist(client: GistClientLike, settings: SyncSettings): Promise<GistResponse | undefined> {
+  return (await findMatchingGists(client, settings))[0];
+}
+
+export async function discoverSyncGists(options: { agentDir: string; client?: GistClientLike; settings?: SyncSettings }): Promise<GistResponse[]> {
+  const settings = await effectiveSettings(options.agentDir, options.settings);
+  return findMatchingGists(options.client ?? await resolveClient(), settings);
 }
 
 async function effectiveSettings(agentDir: string, provided?: SyncSettings): Promise<SyncSettings> {
@@ -220,20 +229,6 @@ async function effectiveSettings(agentDir: string, provided?: SyncSettings): Pro
   return settings;
 }
 
-async function linkExistingPiDepoGist(gistId: string, profileName = "default", packageConfig: PackageConfigStore = defaultPackageConfigStore): Promise<boolean> {
-  try {
-    const config = await packageConfig.load();
-    const activeProfile = config.active_profile ?? profileName;
-    const profile = config.profiles?.[activeProfile];
-    if (!profile || profile.provider !== "github" || profile.repo !== "gists") return false;
-    if (profile.gist_id && profile.gist_id !== gistId) return false;
-    if (!profile.gist_id) await packageConfig.save({ ...config, profiles: { ...config.profiles, [activeProfile]: { ...profile, gist_id: gistId, public: profile.public ?? false } } });
-    return true;
-  } catch {
-    // Configuration sync must remain usable without a pi-depo kit configuration.
-    return false;
-  }
-}
 
 async function initializePiDepoProfile(gistId: string, profileName: string, packageConfig: PackageConfigStore = defaultPackageConfigStore): Promise<boolean> {
   try {
@@ -255,7 +250,19 @@ function packageCliPath(): string {
   return process.env.PI_DEPO_CLI_PATH ?? fileURLToPath(new URL("../dist/cli.mjs", import.meta.url));
 }
 
+async function prepareExplicitPackageOperation(action: "push" | "pull" | "sync", agentDir?: string): Promise<void> {
+  if (!agentDir) return;
+  const settings = await loadSyncSettings(agentDir);
+  if (!settings.gistId) return;
+  if (!await initializePiDepoProfile(settings.gistId, settings.profile)) throw new Error("Could not link pi-depo to the configured private Gist");
+  if (action === "push") {
+    try { await access(kitYmlPath()); }
+    catch { await bootstrapManifestFromPi(); }
+  }
+}
+
 async function packageAction(action: "status" | "push" | "pull" | "sync", agentDir?: string): Promise<{ available: boolean; exitCode: number; output: string }> {
+  if (action !== "status") await prepareExplicitPackageOperation(action, agentDir);
   const cli = packageCliPath();
   try {
     await access(cli);
@@ -301,13 +308,8 @@ function manifestFromPayload(settings: SyncSettings, entries: SnapshotEntry[], p
   return { schemaVersion: 1, tool: "pi-depo-secure", generatedAt: new Date().toISOString(), profile: settings.profile, fileCount: entries.length, payloadBytes: Buffer.byteLength(payload), payloadSha256: sha256(Buffer.from(payload)), encryption: { algorithm: "aes-256-gcm", kdf: "scrypt" }, packageSync: { provider: "pi-depo", enabled: settings.piDepo.enabled } };
 }
 
-export async function previewConfig(options: { agentDir: string; passphrase: string; client?: GistClientLike; settings?: SyncSettings }): Promise<ConfigPreview> {
-  let settings = await effectiveSettings(options.agentDir, options.settings);
-  if (!settings.gistId) {
-    const client = options.client ?? await resolveClient();
-    const matching = await findMatchingGist(client, settings);
-    if (matching) settings = { ...settings, gistId: matching.id };
-  }
+export async function previewConfig(options: { agentDir: string; passphrase: string; client?: GistClientLike; settings?: SyncSettings; createNew?: boolean }): Promise<ConfigPreview> {
+  const settings = options.createNew ? validateSettings(options.settings ?? await loadSyncSettings(options.agentDir)) : await effectiveSettings(options.agentDir, options.settings);
   const entries = await collectSnapshot(options.agentDir, settings.include, settings.exclude);
   const encrypted = await encryptSnapshot(entries, options.passphrase);
   const payload = JSON.stringify(encrypted);
@@ -349,17 +351,20 @@ async function readRemoteSnapshot(client: GistClientLike, settings: SyncSettings
   return { manifest, entries };
 }
 
-export async function pushConfig(options: { agentDir: string; passphrase: string; client?: GistClientLike; settings?: SyncSettings; syncPackages?: boolean; packageConfig?: PackageConfigStore }): Promise<SyncResult> {
+export async function pushConfig(options: { agentDir: string; passphrase: string; client?: GistClientLike; settings?: SyncSettings; syncPackages?: boolean; packageConfig?: PackageConfigStore; createNew?: boolean }): Promise<SyncResult> {
   const initialSettings = validateSettings(options.settings ?? await loadSyncSettings(options.agentDir));
   if (options.syncPackages && initialSettings.piDepo.enabled) {
     const packageResult = await packagePush(options.agentDir);
     if (!packageResult.available || packageResult.exitCode !== 0) throw new Error("pi-depo package push failed");
   }
   const client = await resolveClient(options.client);
-  let settings = await effectiveSettings(options.agentDir, initialSettings);
+  const settings = options.createNew ? initialSettings : await effectiveSettings(options.agentDir, initialSettings);
   if (!settings.gistId) {
-    const matching = await findMatchingGist(client, settings);
-    if (matching) settings = { ...settings, gistId: matching.id };
+    const matches = await findMatchingGists(client, settings);
+    if (!options.createNew) {
+      if (matches.length > 1) throw new Error("Multiple matching private Gists found; run setup with an explicit target");
+      if (matches.length === 1) throw new Error("Existing private Gist found; run gist-sync setup to restore it or use --create");
+    }
   }
   const entries = await collectSnapshot(options.agentDir, settings.include, settings.exclude);
   const encrypted = await encryptSnapshot(entries, options.passphrase);
@@ -376,30 +381,30 @@ export async function pushConfig(options: { agentDir: string; passphrase: string
   }
   if (!result.id) throw new Error("GitHub did not return a Gist ID");
   await saveSyncSettings(options.agentDir, { ...settings, gistId: result.id });
-  await linkExistingPiDepoGist(result.id, settings.profile, options.packageConfig);
   return { gistId: result.id, manifest };
 }
 
-export async function setupSync(options: { agentDir: string; passphrase: string; client?: GistClientLike; settings?: SyncSettings; profile?: string; gistId?: string; syncPackages?: boolean; packageConfig?: PackageConfigStore; packageSetup?: PackageSetup }): Promise<SetupResult> {
+export async function setupSync(options: { agentDir: string; passphrase: string; client?: GistClientLike; settings?: SyncSettings; profile?: string; gistId?: string; syncPackages?: boolean; packageConfig?: PackageConfigStore; packageSetup?: PackageSetup; createNew?: boolean }): Promise<SetupResult> {
   const current = validateSettings(options.settings ?? await loadSyncSettings(options.agentDir));
   const settings = validateSettings({ ...current, ...(options.profile ? { profile: options.profile, description: "pi-gist-sync-" + options.profile } : {}), ...(options.gistId ? { gistId: options.gistId } : {}) });
+  const hadExistingGist = Boolean(settings.gistId);
   const client = await resolveClient(options.client);
-  let selected: GistResponse | undefined;
-  if (settings.gistId) {
-    selected = await client.get(settings.gistId);
-    assertPrivateGist(selected);
-  } else {
-    selected = await findMatchingGist(client, settings);
-    if (selected) settings.gistId = selected.id;
-  }
-  const result = await pushConfig({ agentDir: options.agentDir, passphrase: options.passphrase, client, settings, syncPackages: options.syncPackages, packageConfig: options.packageConfig });
+  const result = await pushConfig({ agentDir: options.agentDir, passphrase: options.passphrase, client, settings, syncPackages: options.syncPackages, packageConfig: options.packageConfig, createNew: options.createNew });
   const packageConfig = options.packageConfig ?? defaultPackageConfigStore;
-  if (options.packageSetup) {
-    if (await initializePiDepoProfile(result.gistId, settings.profile, packageConfig)) await options.packageSetup(result.gistId, settings.profile, packageConfig);
-  } else {
-    await initializePackageLayer(result.gistId, settings.profile, packageConfig);
+  if (options.syncPackages && settings.piDepo.enabled) {
+    if (options.packageSetup) {
+      if (await initializePiDepoProfile(result.gistId, settings.profile, packageConfig)) await options.packageSetup(result.gistId, settings.profile, packageConfig);
+    } else {
+      await initializePackageLayer(result.gistId, settings.profile, packageConfig);
+    }
   }
-  return { ...result, settings: { ...settings, gistId: result.gistId }, created: !selected, reused: Boolean(selected) };
+  return { ...result, settings: { ...settings, gistId: result.gistId }, created: !hadExistingGist, reused: hadExistingGist };
+}
+
+export async function restoreExistingGist(options: { agentDir: string; passphrase: string; gistId: string; client?: GistClientLike; settings?: SyncSettings; prune?: boolean }): Promise<SyncResult> {
+  const current = validateSettings(options.settings ?? await loadSyncSettings(options.agentDir));
+  const settings = validateSettings({ ...current, gistId: options.gistId });
+  return fetchConfig({ agentDir: options.agentDir, passphrase: options.passphrase, client: options.client, settings, prune: options.prune });
 }
 
 export async function fetchConfig(options: { agentDir: string; passphrase: string; client?: GistClientLike; settings?: SyncSettings; prune?: boolean; syncPackages?: boolean }): Promise<SyncResult> {

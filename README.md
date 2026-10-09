@@ -20,14 +20,17 @@ Inside Pi, run:
 
     /gist-sync setup
 
-The guided setup checks the Pi agent directory, detects GitHub authentication, discovers or creates a Private Gist, initializes the sync profile, prompts for the encryption passphrase through Pi's UI, previews the managed files, and asks for confirmation before the first write.
+The guided setup checks GitHub authentication before asking for a passphrase. If GitHub is not authenticated, it starts the official web/device flow: the terminal or Pi shows a GitHub device URL and one-time code, which can be completed from any browser.
 
-It never silently installs packages, updates Pi, or runs `pd sync`.
+If a matching Private Gist already exists, setup defaults to restoring it. It previews the remote diff, creates a local encrypted backup, and never uploads the new machine first. Use `--create` only when you explicitly want a new Gist. A new Gist is created only when no match exists or creation is explicitly selected.
+
+The setup passphrase is masked and confirmed twice in Pi. It never silently installs packages, updates Pi, or runs `pd sync`.
 
 ## Daily usage
 
 Inside Pi:
 
+    /gist-sync auth
     /gist-sync status
     /gist-sync diff
     /gist-sync push
@@ -46,7 +49,7 @@ To restore a selected backup:
 
 ## Package management
 
-Package operations remain explicit:
+Configuration setup does not create or push `pi-depo.yml`. Package operations remain explicit:
 
     /gist-sync packages status
     /gist-sync packages push
@@ -61,8 +64,10 @@ The extension must work without a global `pd` on PATH. Package actions use share
 
 The standalone CLI mirrors the extension for headless workflows:
 
-    pd gist-sync init
+    pd gist-sync auth
     printf "%s" "$PI_GIST_SYNC_PASSPHRASE" | pd gist-sync setup --passphrase-stdin --yes
+
+For an existing Gist, `setup` restores the single matching Private Gist by default. To force a new one: `pd gist-sync setup --create --passphrase-stdin --yes`. To select a specific existing Gist: `pd gist-sync setup --gist-id=<id> --passphrase-stdin --yes`.
     pd gist-sync status
     printf "%s" "$PI_GIST_SYNC_PASSPHRASE" | pd gist-sync diff --passphrase-stdin
     printf "%s" "$PI_GIST_SYNC_PASSPHRASE" | pd gist-sync push --passphrase-stdin --yes
@@ -91,7 +96,7 @@ The Git-installed extension is the recommended user interface. The CLI commands 
 
 A selected Private Gist may contain:
 
-- `pi-depo.yml` and `kit.lock.json`, owned by pi-depo;
+- `pi-depo.yml` and `kit.lock.json`, owned by pi-depo after an explicit package operation;
 - `pi-gist-sync.manifest.json`, containing non-secret metadata and a ciphertext hash;
 - `pi-gist-sync.config.enc.json`, containing the encrypted Pi configuration snapshot;
 - unrelated files, which are preserved.
@@ -124,7 +129,8 @@ Pull is additive and overwrite-only by default. It does not delete local files a
 
 ## Security properties
 
-- GitHub tokens are read from `gh auth token`, `GITHUB_TOKEN`, or `GH_TOKEN` and are not persisted.
+- GitHub tokens are read from `gh auth token`, `GITHUB_TOKEN`, or `GH_TOKEN` and are not persisted by this package.
+- GitHub authentication uses the official `gh` web/device flow; the extension never asks users to paste or stores a token.
 - Configuration payloads use scrypt and AES-256-GCM with a fresh salt and nonce per push.
 - API keys are never printed by the extension, CLI, manifest, diff, or errors.
 - `models.json`, `mcp.json`, and local sync settings are written with mode `600`.

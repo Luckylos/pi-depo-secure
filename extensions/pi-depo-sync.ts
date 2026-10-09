@@ -11,8 +11,9 @@ interface ExtensionAPI {
 
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { diffConfig, doctorSync, fetchConfig, initSync, packagePull, packagePush, packageStatus, previewConfig, pushConfig, restoreBackup, setupSync, syncStatus } from "../src/config-sync.js";
+import { diffConfig, discoverSyncGists, doctorSync, fetchConfig, initSync, loadSyncSettings, packagePull, packagePush, packageStatus, previewConfig, pushConfig, restoreBackup, restoreExistingGist, setupSync, syncStatus } from "../src/config-sync.js";
 import { promptConfirmedSecret, promptSecret, type SecretPromptUI } from "../src/secret-input.js";
+import { authenticateGithub, githubAuthStatus } from "../src/github-auth.js";
 
 function agentDir(): string { return process.env.PI_CODING_AGENT_DIR ?? process.env.PI_AGENT_DIR ?? join(homedir(), ".pi", "agent"); }
 
@@ -66,6 +67,14 @@ async function confirmWrite(ctx: { hasUI: boolean; ui: { confirm(title: string, 
   return ctx.ui.confirm(title, message);
 }
 
+async function ensureGithubAuthForExtension(ctx: ExtensionCommandContext): Promise<void> {
+  const status = await githubAuthStatus();
+  if (status.authenticated) return;
+  if (!ctx.hasUI) throw new Error(status.detail + " Run 'pd gist-sync auth' in a terminal.");
+  if (!(await confirmWrite(ctx, "Authenticate GitHub", "A browser/device login will be started. Complete it on any device, then return to Pi."))) throw new Error("GitHub authentication cancelled");
+  await authenticateGithub({ onOutput: (chunk) => { const message = chunk.trim(); if (message) ctx.ui.notify(message, "info"); } });
+}
+
 export default function register(pi: ExtensionAPI): void {
   pi.registerCommand("gist-sync", {
     description: "Synchronize encrypted Pi configuration through a private GitHub Gist",
@@ -84,14 +93,51 @@ export default function register(pi: ExtensionAPI): void {
           ctx.ui.notify("Pi Gist Sync local settings initialized for profile " + settings.profile, "info");
           return;
         }
+        if (action === "auth") {
+          if (!ctx.hasUI) throw new Error("Interactive confirmation is required for GitHub auth. Run 'pd gist-sync auth' in a terminal.");
+          await ensureGithubAuthForExtension(ctx);
+          ctx.ui.notify("GitHub authentication is ready.", "info");
+          return;
+        }
         if (action === "setup") {
           if (!ctx.hasUI) throw new Error("Interactive confirmation is required for setup");
+          await ensureGithubAuthForExtension(ctx);
+          const current = await loadSyncSettings(root);
+          const requestedGist = optionValue(parts, "--gist-id");
+          const createNew = hasFlag(parts, "--create");
+          if (current.gistId && !requestedGist) throw new Error("Pi Gist Sync is already configured. Use /gist-sync push or /gist-sync pull.");
           const phrase = await confirmedPassphrase(ctx);
-          const preview = await previewConfig({ agentDir: root, passphrase: phrase });
+          const restoreGistId = requestedGist;
+          if (restoreGistId) {
+            const restoreSettings = { ...current, gistId: restoreGistId };
+            const preview = await diffConfig({ agentDir: root, passphrase: phrase, settings: restoreSettings });
+            ctx.ui.notify("Existing private Gist found. Restore preview:\n" + diffText(preview.diff), "info");
+            if (!(await confirmWrite(ctx, "Restore existing Pi Gist Sync?", "A local encrypted backup will be created before writing."))) return;
+            const result = await restoreExistingGist({ agentDir: root, passphrase: phrase, gistId: restoreGistId, settings: current });
+            ctx.ui.notify("Configuration restored from Gist " + result.gistId + ". Backup: " + result.backupPath, "info");
+            return;
+          }
+          const matches = createNew ? [] : await discoverSyncGists({ agentDir: root, settings: current });
+          if (matches.length > 1) throw new Error("Multiple matching private Gists found. Use /gist-sync setup --gist-id=<id> or --create.");
+          if (matches.length === 1) {
+            const existing = matches[0];
+            ctx.ui.notify("Existing private Gist found: " + existing.id + "\n" + (existing.description ?? ""), "info");
+            if (await confirmWrite(ctx, "Restore existing Pi Gist Sync?", "This restores the cloud configuration and does not upload this machine first.")) {
+              const restoreSettings = { ...current, gistId: existing.id };
+              const preview = await diffConfig({ agentDir: root, passphrase: phrase, settings: restoreSettings });
+              ctx.ui.notify(diffText(preview.diff), "info");
+              if (!(await confirmWrite(ctx, "Apply cloud configuration?", "A local encrypted backup will be created before writing."))) return;
+              const result = await restoreExistingGist({ agentDir: root, passphrase: phrase, gistId: existing.id, settings: current });
+              ctx.ui.notify("Configuration restored from Gist " + result.gistId + ". Backup: " + result.backupPath, "info");
+              return;
+            }
+            if (!(await confirmWrite(ctx, "Create a new private Gist instead?", "Only this machine's encrypted configuration will be uploaded."))) return;
+          }
+          const preview = await previewConfig({ agentDir: root, passphrase: phrase, settings: current, createNew: true });
           ctx.ui.notify(previewText(preview), "info");
-          if (!(await confirmWrite(ctx, "Create or update Pi Gist Sync?", "A private Gist will receive an encrypted snapshot."))) return;
-          const result = await setupSync({ agentDir: root, passphrase: phrase, profile: optionValue(parts, "--profile"), gistId: optionValue(parts, "--gist-id") });
-          ctx.ui.notify((result.created ? "Created" : "Updated") + " private Gist " + result.gistId + " (" + result.manifest.fileCount + " files)", "info");
+          if (!(await confirmWrite(ctx, "Create a new Pi Gist Sync?", "A new private Gist will receive an encrypted snapshot. Package operations will not run."))) return;
+          const result = await setupSync({ agentDir: root, passphrase: phrase, profile: optionValue(parts, "--profile"), settings: current, createNew: true });
+          ctx.ui.notify("Created private Gist " + result.gistId + " (" + result.manifest.fileCount + " files)", "info");
           return;
         }
         if (action === "status") {
@@ -102,7 +148,10 @@ export default function register(pi: ExtensionAPI): void {
           return;
         }
         if (action === "doctor") {
-          const diagnosis = await doctorSync({ agentDir: root, passphrase: passphraseFromEnvironment() });
+          const localSettings = await loadSyncSettings(root);
+          let phrase = passphraseFromEnvironment();
+          if (!phrase && ctx.hasUI && localSettings.gistId) phrase = await passphrase(ctx);
+          const diagnosis = await doctorSync({ agentDir: root, passphrase: phrase });
           const lines = diagnosis.checks.map((check) => (check.ok ? "OK  " : "FAIL") + " " + check.name + ": " + check.detail);
           ctx.ui.notify(lines.join("\n"), diagnosis.ok ? "info" : "warning");
           return;
@@ -163,7 +212,7 @@ export default function register(pi: ExtensionAPI): void {
           ctx.ui.notify("Backup restored", "info");
           return;
         }
-        throw new Error("Usage: /gist-sync setup|init|status|diff|push|pull|doctor|restore|packages");
+        throw new Error("Usage: /gist-sync auth|setup|init|status|diff|push|pull|doctor|restore|packages");
       } catch (error) {
         ctx.ui.notify(error instanceof Error ? error.message : "Pi Gist Sync failed", "error");
       }

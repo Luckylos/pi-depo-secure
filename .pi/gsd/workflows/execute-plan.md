@@ -454,7 +454,7 @@ From SUMMARY: Extract decisions and add to STATE.md:
 
 ```bash
 # Add each decision from SUMMARY key-decisions
-# Prefer file inputs for shell-safe text (preserves `$`, `*`, etc. exactly)
+# Prefer file inputs for shell-safe text (preserves shell metacharacters exactly)
 pi-gsd-tools state add-decision \
   --phase "${PHASE}" --summary-file "${DECISION_TEXT_FILE}" --rationale-file "${RATIONALE_FILE}"
 

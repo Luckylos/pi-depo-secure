@@ -7,7 +7,8 @@ import { kitYmlPath } from "./config.js";
 import { VERSION } from "./version.js";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { diffConfig, doctorSync, fetchConfig, initSync, packagePull, packagePush, packageStatus, previewConfig, pushConfig, restoreBackup, setupSync, syncStatus } from "./config-sync.js";
+import { diffConfig, discoverSyncGists, doctorSync, fetchConfig, initSync, loadSyncSettings, packagePull, packagePush, packageStatus, previewConfig, pushConfig, restoreBackup, restoreExistingGist, setupSync, syncStatus } from "./config-sync.js";
+import { authenticateGithub, githubAuthStatus } from "./github-auth.js";
 
 const main = defineCommand({
   meta: {
@@ -272,18 +273,60 @@ const main = defineCommand({
     "gist-sync": defineCommand({
       meta: { name: "gist-sync", description: "Sync encrypted Pi configuration through a private GitHub Gist" },
       subCommands: {
+        auth: defineCommand({
+          meta: { name: "auth", description: "Authenticate GitHub through a browser/device flow" },
+          args: { json: { type: "boolean", description: "Print JSON", default: false } },
+          async run({ args }) {
+            const before = await githubAuthStatus();
+            if (before.authenticated) {
+              if (args.json) console.log(JSON.stringify(before, null, 2));
+              else console.log(pc.green("  GitHub authentication is ready."));
+              return;
+            }
+            console.log("  " + before.detail);
+            const after = await authenticateGithub({ onOutput: (chunk) => process.stdout.write(chunk) });
+            if (args.json) console.log(JSON.stringify(after, null, 2));
+            else console.log(pc.green("\n  GitHub authentication is ready."));
+          },
+        }),
         setup: defineCommand({
-          meta: { name: "setup", description: "Create or reuse a private Gist and upload an encrypted Pi snapshot" },
-          args: syncArgs({ gistId: { type: "string", description: "Existing private Gist ID" }, profile: { type: "string", description: "Profile name", default: "default" } }),
+          meta: { name: "setup", description: "Safely create a new private Gist or restore an existing one" },
+          args: syncArgs({ gistId: { type: "string", description: "Existing private Gist ID to restore" }, profile: { type: "string", description: "Profile name", default: "default" }, create: { type: "boolean", description: "Create a new Gist even when a matching one exists", default: false } }),
           async run({ args }) {
             rejectCombinedPackageFlag();
+            await ensureCliGithubAuth();
             const root = piAgentDir(args.agentDir as string | undefined);
+            const current = await loadSyncSettings(root);
+            if (current.gistId) throw new Error("Pi Gist Sync is already configured. Use 'pd gist-sync push' or 'pd gist-sync pull'.");
             const phrase = await readPassphrase(args.passphraseStdin === true);
-            const preview = await previewConfig({ agentDir: root, passphrase: phrase });
+            const requestedGist = args.gistId as string | undefined;
+            if (requestedGist) {
+              const settings = { ...current, gistId: requestedGist };
+              const preview = await diffConfig({ agentDir: root, passphrase: phrase, settings });
+              if (args.json) console.log(JSON.stringify(preview, null, 2)); else { console.log("  Existing private Gist: " + requestedGist); printConfigDiff(preview.diff); }
+              requireYes(args.yes === true, "restore");
+              const result = await restoreExistingGist({ agentDir: root, passphrase: phrase, gistId: requestedGist, settings: current });
+              if (args.json) console.log(JSON.stringify(result, null, 2)); else console.log(pc.green("  Configuration restored. Backup: " + result.backupPath));
+              return;
+            }
+            const matches = args.create ? [] : await discoverSyncGists({ agentDir: root, settings: current });
+            if (matches.length > 1) throw new Error("Multiple matching private Gists found. Use --gist-id=<id> or --create.");
+            if (matches.length === 1) {
+              const existing = matches.at(0);
+              if (!existing) throw new Error("Matching Gist lookup returned no target");
+              const settings = { ...current, gistId: existing.id };
+              const preview = await diffConfig({ agentDir: root, passphrase: phrase, settings });
+              if (args.json) console.log(JSON.stringify(preview, null, 2)); else { console.log("  Existing private Gist: " + existing.id); printConfigDiff(preview.diff); }
+              requireYes(args.yes === true, "restore");
+              const result = await restoreExistingGist({ agentDir: root, passphrase: phrase, gistId: existing.id, settings: current });
+              if (args.json) console.log(JSON.stringify(result, null, 2)); else console.log(pc.green("  Configuration restored. Backup: " + result.backupPath));
+              return;
+            }
+            const preview = await previewConfig({ agentDir: root, passphrase: phrase, settings: current, createNew: args.create === true });
             if (args.json) console.log(JSON.stringify(preview, null, 2)); else printConfigPreview(preview);
             requireYes(args.yes === true, "setup");
-            const result = await setupSync({ agentDir: root, passphrase: phrase, gistId: args.gistId as string | undefined, profile: args.profile as string | undefined });
-            if (args.json) console.log(JSON.stringify(result, null, 2)); else console.log(pc.green("  " + (result.created ? "Created" : "Updated") + " private Gist " + result.gistId + "."));
+            const result = await setupSync({ agentDir: root, passphrase: phrase, profile: args.profile as string | undefined, settings: current, createNew: args.create === true });
+            if (args.json) console.log(JSON.stringify(result, null, 2)); else console.log(pc.green("  Created private Gist " + result.gistId + "."));
           },
         }),
         init: defineCommand({
@@ -382,6 +425,13 @@ const main = defineCommand({
     }),
   },
 });
+
+async function ensureCliGithubAuth(): Promise<void> {
+  const status = await githubAuthStatus();
+  if (status.authenticated) return;
+  console.log("  " + status.detail);
+  await authenticateGithub({ onOutput: (chunk) => process.stdout.write(chunk) });
+}
 
 function syncArgs(extra: ArgsDef = {}): ArgsDef {
   return { agentDir: { type: "string", description: "Pi agent directory" }, json: { type: "boolean", description: "Print JSON", default: false }, passphraseStdin: { type: "boolean", description: "Read passphrase from stdin", default: false }, yes: { type: "boolean", description: "Confirm a write operation", default: false }, ...extra };

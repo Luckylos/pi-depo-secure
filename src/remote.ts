@@ -1,4 +1,5 @@
 import { runCommand } from "./process.js"
+import { githubEnvironmentToken } from "./github-auth.js";
 import { join } from "node:path";
 import { readFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
@@ -10,17 +11,17 @@ import { loadConfig, saveConfig, remoteRawUrl, remoteApiUrl } from "./config.js"
 // then read the credential from gh without invoking a shell.
 async function githubTokenFromCLI(): Promise<string> {
   const status = await runCommand("gh", ["auth", "status"], { timeoutMs: 10_000 });
-  if (status.exitCode !== 0) throw new Error("GitHub CLI is not authenticated. Run: gh auth login --scopes gist");
+  if (status.exitCode !== 0) throw new Error("GitHub CLI is not authenticated. Run: pd gist-sync auth");
   const token = await runCommand("gh", ["auth", "token"], { timeoutMs: 10_000 });
   const value = token.stdout.toString("utf8").trim();
-  if (token.exitCode !== 0 || !value) throw new Error("Could not retrieve token from GitHub CLI. Run: gh auth login --scopes gist");
+  if (token.exitCode !== 0 || !value) throw new Error("Could not retrieve a GitHub token. Run: pd gist-sync auth");
   return value;
 }
 
 export async function tokenForProvider(provider: RemoteProvider): Promise<string> {
   if (provider === "github") {
-    const fromEnvironment = process.env.GITHUB_TOKEN ?? process.env.GH_TOKEN;
-    if (fromEnvironment?.trim()) return fromEnvironment.trim();
+    const fromEnvironment = githubEnvironmentToken();
+    if (fromEnvironment) return fromEnvironment;
     return await githubTokenFromCLI();
   }
   const fromEnvironment = process.env.CODEBERG_TOKEN;

@@ -10,13 +10,13 @@ afterEach(() => {
 });
 
 describe("GitHub authentication", () => {
-  it("uses the system keychain token", async () => {
+  it("uses the credential store token", async () => {
     const tokenStore: GitHubTokenStore = { get: async () => "keychain-token", set: async () => {} };
     const status = await githubAuthStatus({ tokenStore });
-    expect(status).toMatchObject({ authenticated: true, source: "keychain" });
+    expect(status).toMatchObject({ authenticated: true, source: "credential-store" });
   });
 
-  it("resolves API credentials only from the system keychain", async () => {
+  it("resolves API credentials only from the credential store", async () => {
     const tokenStore: GitHubTokenStore = { get: async () => "keychain-api-token", set: async () => {} };
     await expect(githubTokenFromAuth({ tokenStore })).resolves.toBe("keychain-api-token");
   });
@@ -30,7 +30,7 @@ describe("GitHub authentication", () => {
     await expect(githubTokenFromAuth({ tokenStore })).rejects.toThrow(/No GitHub authorization|PI_GITHUB_OAUTH_CLIENT_ID|keychain/i);
   });
 
-  it("completes GitHub Device Flow and stores the token in the keychain", async () => {
+  it("completes GitHub Device Flow and stores the token in the credential store", async () => {
     const stored: string[] = [];
     const tokenStore: GitHubTokenStore = { get: async () => undefined, set: async (token) => { stored.push(token); } };
     const responses = [
@@ -52,7 +52,7 @@ describe("GitHub authentication", () => {
       onOutput: (chunk) => output.push(chunk),
     });
 
-    expect(status).toMatchObject({ authenticated: true, source: "keychain" });
+    expect(status).toMatchObject({ authenticated: true, source: "credential-store" });
     expect(stored).toEqual(["secret-access-token"]);
     expect(calls.map((call) => call.url)).toEqual([
       "https://github.com/login/device/code",
@@ -80,7 +80,7 @@ describe("GitHub authentication", () => {
       tokenStore,
       fetchImpl: async () => ({ ok: true, status: 200, json: async () => responses.shift() } as Response),
       sleep: async (milliseconds) => { waits.push(milliseconds); },
-    })).resolves.toMatchObject({ authenticated: true, source: "keychain" });
+    })).resolves.toMatchObject({ authenticated: true, source: "credential-store" });
     expect(waits).toEqual([10_000]);
     expect(stored).toEqual(["slow-token"]);
   });
@@ -89,11 +89,11 @@ describe("GitHub authentication", () => {
     await expect(authenticateGithub({ tokenStore: emptyTokenStore(), env: {} })).rejects.toThrow(/PI_GITHUB_OAUTH_CLIENT_ID/);
   });
 
-  it("reports an unavailable system keychain without suggesting alternate login paths", async () => {
-    const tokenStore: GitHubTokenStore = { get: async () => { throw new Error("keychain unavailable"); }, set: async () => {} };
+  it("reports an unavailable credential store without suggesting alternate login paths", async () => {
+    const tokenStore: GitHubTokenStore = { get: async () => { throw new Error("credential store unavailable"); }, set: async () => {} };
     const status = await githubAuthStatus({ tokenStore });
     expect(status.authenticated).toBe(false);
-    expect(status.detail).toMatch(/keychain/i);
+    expect(status.detail).toMatch(/credential store/i);
     expect(status.detail).not.toMatch(/gh|GITHUB_TOKEN|GH_TOKEN/);
   });
 });

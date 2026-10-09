@@ -20,7 +20,7 @@ Inside Pi, run:
 
     /gist-sync setup
 
-The guided setup checks GitHub authentication before asking for a passphrase. It always uses the built-in GitHub Device Flow and stores the resulting token in the system credential manager. No GitHub CLI, pasted token, or environment token is required.
+The guided setup checks GitHub authentication before asking for a passphrase. It always uses the built-in GitHub Device Flow and stores the resulting token in the local credential store. No GitHub CLI, pasted token, or environment token is required.
 
 ### GitHub Device Flow
 
@@ -34,7 +34,7 @@ Then run:
 
     /gist-sync auth
 
-The terminal displays a GitHub verification URL and one-time code. Complete the authorization from any browser. The resulting access token is stored in the operating system credential manager through the package's keychain integration. It is not written to Pi settings, the Gist, logs, or command arguments. The same flow uses macOS Keychain, Linux Secret Service, or Windows Credential Manager. A supported system credential manager must be available on every host.
+The terminal displays a GitHub verification URL and one-time code. Complete the authorization from any browser. The resulting access token is stored through the package's local credential store. When available, it uses macOS Keychain, Linux Secret Service, or Windows Credential Manager. Otherwise it uses an AES-256-GCM encrypted file in the user's config directory with restrictive file permissions. It is not written to Pi settings, the Gist, logs, or command arguments.
 
 If a matching Private Gist already exists, setup defaults to restoring it. It previews the remote diff, creates a local encrypted backup, and never uploads the new machine first. Use `--create` only when you explicitly want a new Gist. A new Gist is created only when no match exists or creation is explicitly selected.
 
@@ -74,10 +74,7 @@ Configuration setup does not create or push `pi-depo.yml`. Package operations re
 
 The extension must work without a global `pd` on PATH. Package actions use shared pi-depo code or the package-local CLI bundle.
 
-The package uses the cross-platform `keytar` integration for credential storage. If npm blocks its native install script, approve and rebuild it from the package directory:
-
-    npm install-scripts approve keytar
-    npm rebuild keytar
+The package can use the cross-platform `keytar` integration for native credential storage, but it is optional. If npm blocks its native install script, no approval is required: the package automatically uses its encrypted user-local credential store instead.
 
 ## Optional CLI
 
@@ -121,7 +118,7 @@ A selected Private Gist may contain:
 - `pi-gist-sync.config.enc.json`, containing the encrypted Pi configuration snapshot;
 - unrelated files, which are preserved.
 
-The sync layer never writes a public Gist or stores the encryption passphrase. GitHub tokens remain in the operating system credential manager only.
+The sync layer never writes a public Gist or stores the encryption passphrase. GitHub tokens remain in the native credential manager when available, or in the encrypted user-local credential store.
 
 ## Configuration scope
 
@@ -149,8 +146,8 @@ Pull is additive and overwrite-only by default. It does not delete local files a
 
 ## Security properties
 
-- GitHub authentication uses only the built-in Device Flow and the system credential manager; the extension never accepts pasted or environment tokens.
-- The Device Flow uses only a public OAuth Client ID and stores the resulting token in macOS Keychain, Linux Secret Service, or Windows Credential Manager.
+- GitHub authentication uses only the built-in Device Flow; the extension never accepts pasted or environment tokens.
+- The Device Flow uses only a public OAuth Client ID and stores the resulting token in a native credential manager when available, or an AES-256-GCM encrypted user-local file.
 - Configuration payloads use scrypt and AES-256-GCM with a fresh salt and nonce per push.
 - API keys are never printed by the extension, CLI, manifest, diff, or errors.
 - `models.json`, `mcp.json`, and local sync settings are written with mode `600`.

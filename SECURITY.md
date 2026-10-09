@@ -6,9 +6,9 @@ The encrypted configuration file is designed to protect Pi configuration content
 
 ## Credentials
 
-The passphrase is not stored in the Gist or in pi-gist-sync.json. The GitHub token is not stored in ~/.pkit/config.yml, Pi settings, or the Gist. Device Flow tokens are stored only in the operating system credential manager. The authentication path does not accept pasted tokens, environment tokens, or GitHub CLI credentials.
+The passphrase is not stored in the Gist or in pi-gist-sync.json. The GitHub token is not stored in ~/.pkit/config.yml, Pi settings, or the Gist. Device Flow tokens are stored in a native credential manager when available, or an AES-256-GCM encrypted user-local credential file. The authentication path does not accept pasted tokens, environment tokens, or GitHub CLI credentials.
 
-The synchronized models.json may contain provider API keys. Treat the passphrase and every host that receives the decrypted file as sensitive.
+The synchronized models.json may contain provider API keys. Treat the passphrase, the credential-store files, and every host that receives the decrypted file as sensitive.
 
 ## Restore behavior
 
@@ -24,8 +24,8 @@ The fork writes only pi-gist-sync.manifest.json and pi-gist-sync.config.enc.json
 - Keep PI_GIST_SYNC_PASSPHRASE out of shell history, process listings, and shared logs.
 - Use the built-in `/gist-sync auth` Device Flow. The flow can be completed from another browser when the CLI host has no browser.
 - Create the OAuth App with Device Flow enabled and expose only its public Client ID through `PI_GITHUB_OAUTH_CLIENT_ID`; never distribute an OAuth client secret.
-- The keychain path uses macOS Keychain, Linux Secret Service, or Windows Credential Manager. A supported system credential manager is required on every host.
-- If npm blocks the native `keytar` install script, approve only `keytar` and rebuild it from the package directory.
+- The preferred native credential path uses macOS Keychain, Linux Secret Service, or Windows Credential Manager.
+- If a native credential manager or `keytar` is unavailable, the package uses a user-local encrypted credential file. It requires no system package or elevated install permission, but it has weaker isolation from a process already running as the same user.
 - Review `/gist-sync diff` before every restore; a first-run setup with an existing Gist restores by default and never overwrites the remote snapshot.
 - Use `pd gist-sync diff` only in headless CLI workflows.
 - Do not enable --prune on a host containing unmanaged Pi files.

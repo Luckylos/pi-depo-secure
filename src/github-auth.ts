@@ -1,4 +1,6 @@
-export type GitHubAuthSource = "keychain" | "none";
+import { portableGitHubTokenStore } from "./credential-store.js";
+
+export type GitHubAuthSource = "credential-store" | "none";
 
 export interface GitHubAuthStatus {
   authenticated: boolean;
@@ -55,9 +57,40 @@ export function systemGitHubTokenStore(): GitHubTokenStore {
   };
 }
 
-function missingAuthDetail(env: NodeJS.ProcessEnv, keychainError: boolean): string {
-  if (keychainError) {
-    return "The system keychain is unavailable. Enable a supported credential store: macOS Keychain, Linux Secret Service, or Windows Credential Manager.";
+export function defaultGitHubTokenStore(): GitHubTokenStore {
+  const portable = portableGitHubTokenStore();
+  let selected: GitHubTokenStore | undefined;
+  const select = async (): Promise<GitHubTokenStore> => {
+    if (selected) return selected;
+    const system = systemGitHubTokenStore();
+    try {
+      await system.get();
+      selected = system;
+    } catch {
+      selected = portable;
+    }
+    return selected;
+  };
+  return {
+    async get(): Promise<string | undefined> {
+      return (await select()).get();
+    },
+    async set(token: string): Promise<void> {
+      const store = await select();
+      try {
+        await store.set(token);
+      } catch (error) {
+        if (store === portable) throw error;
+        selected = portable;
+        await portable.set(token);
+      }
+    },
+  };
+}
+
+function missingAuthDetail(env: NodeJS.ProcessEnv, storeError: boolean): string {
+  if (storeError) {
+    return "The local credential store is unavailable. Check that the user configuration directory is writable.";
   }
   if (!env.PI_GITHUB_OAUTH_CLIENT_ID?.trim()) {
     return "No GitHub authorization found. Set PI_GITHUB_OAUTH_CLIENT_ID, then run /gist-sync auth.";
@@ -72,10 +105,10 @@ async function tokenFromStore(store: GitHubTokenStore): Promise<string | undefin
 
 export async function githubAuthStatus(options: GitHubAuthDependencies = {}): Promise<GitHubAuthStatus> {
   const env = options.env ?? process.env;
-  const store = options.tokenStore ?? systemGitHubTokenStore();
+  const store = options.tokenStore ?? defaultGitHubTokenStore();
   try {
     if (await tokenFromStore(store)) {
-      return { authenticated: true, source: "keychain", detail: "GitHub token is available in the system keychain" };
+      return { authenticated: true, source: "credential-store", detail: "GitHub token is available in the local credential store" };
     }
     return { authenticated: false, source: "none", detail: missingAuthDetail(env, false) };
   } catch {
@@ -84,12 +117,12 @@ export async function githubAuthStatus(options: GitHubAuthDependencies = {}): Pr
 }
 
 export async function githubTokenFromAuth(options: GitHubAuthDependencies = {}): Promise<string> {
-  const store = options.tokenStore ?? systemGitHubTokenStore();
+  const store = options.tokenStore ?? defaultGitHubTokenStore();
   try {
     const token = await tokenFromStore(store);
     if (token) return token;
   } catch {
-    throw new Error("The system keychain is unavailable. Enable a supported credential store, then run /gist-sync auth again.");
+    throw new Error("The local credential store is unavailable. Check that the user configuration directory is writable, then run /gist-sync auth again.");
   }
   throw new Error("No GitHub authorization found. Run /gist-sync auth.");
 }
@@ -162,9 +195,9 @@ async function authenticateGithubDeviceFlow(options: GitHubLoginOptions, clientI
       try {
         await store.set(token.access_token);
       } catch {
-        throw new Error("GitHub authorization succeeded, but the token could not be saved to the system keychain. Enable a supported credential store and run /gist-sync auth again.");
+        throw new Error("GitHub authorization succeeded, but the token could not be saved to the local credential store. Check that the user configuration directory is writable and run /gist-sync auth again.");
       }
-      return { authenticated: true, source: "keychain", detail: "GitHub token stored in the system keychain" };
+      return { authenticated: true, source: "credential-store", detail: "GitHub token stored in the local credential store" };
     }
     if (token.error === "authorization_pending") {
       await sleep(intervalSeconds * 1000);
@@ -185,10 +218,10 @@ export async function authenticateGithub(options: GitHubLoginOptions = {}): Prom
   const env = options.env ?? process.env;
   const before = await githubAuthStatus(options);
   if (before.authenticated) return before;
-  if (/system keychain is unavailable/i.test(before.detail)) throw new Error(before.detail);
+  if (/local credential store is unavailable/i.test(before.detail)) throw new Error(before.detail);
 
   const clientId = (options.clientId ?? env.PI_GITHUB_OAUTH_CLIENT_ID)?.trim();
   if (!clientId) throw new Error("Set PI_GITHUB_OAUTH_CLIENT_ID, then run /gist-sync auth.");
-  const store = options.tokenStore ?? systemGitHubTokenStore();
+  const store = options.tokenStore ?? defaultGitHubTokenStore();
   return authenticateGithubDeviceFlow(options, clientId, store);
 }

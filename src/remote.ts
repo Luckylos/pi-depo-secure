@@ -7,7 +7,7 @@ import type { RemoteProvider, PkitConfig } from "./types.js";
 import { loadConfig, saveConfig, remoteRawUrl, remoteApiUrl } from "./config.js";
 
 // ─── Token resolution ───────────────────────────────────────────
-// GitHub authentication uses the direct Device Flow and the system keychain.
+// GitHub authentication uses the direct Device Flow and the local credential store.
 async function githubTokenFromKeychain(): Promise<string> {
   return await githubTokenFromAuth();
 }

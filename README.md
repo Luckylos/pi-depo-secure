@@ -24,11 +24,7 @@ The guided setup checks GitHub authentication before asking for a passphrase. It
 
 ### GitHub Device Flow
 
-Create a GitHub OAuth App under Settings -> Developer settings -> OAuth Apps, enable Device Flow in that app's settings, and keep its public Client ID. The app only requests the gist scope. It does not need a client secret for Device Flow.
-
-Set the Client ID on the Pi host before starting Pi or running the CLI:
-
-    export PI_GITHUB_OAUTH_CLIENT_ID=your_public_client_id
+The package includes a public GitHub OAuth Client ID for its Device Flow. The app only requests the gist scope and does not use a client secret. Fork maintainers may override the public Client ID with PI_GITHUB_OAUTH_CLIENT_ID; normal users do not need to set anything.
 
 Then run:
 

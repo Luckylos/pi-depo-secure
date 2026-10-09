@@ -27,7 +27,7 @@ describe("GitHub authentication", () => {
     const tokenStore = emptyTokenStore();
     const status = await githubAuthStatus({ tokenStore });
     expect(status.authenticated).toBe(false);
-    await expect(githubTokenFromAuth({ tokenStore })).rejects.toThrow(/No GitHub authorization|PI_GITHUB_OAUTH_CLIENT_ID|keychain/i);
+    await expect(githubTokenFromAuth({ tokenStore })).rejects.toThrow(/No GitHub authorization|credential store/i);
   });
 
   it("completes GitHub Device Flow and stores the token in the credential store", async () => {
@@ -85,8 +85,22 @@ describe("GitHub authentication", () => {
     expect(stored).toEqual(["slow-token"]);
   });
 
-  it("requires an OAuth Client ID for the direct Device Flow", async () => {
-    await expect(authenticateGithub({ tokenStore: emptyTokenStore(), env: {} })).rejects.toThrow(/PI_GITHUB_OAUTH_CLIENT_ID/);
+  it("uses the built-in project OAuth Client ID", async () => {
+    const tokenStore: GitHubTokenStore = { get: async () => undefined, set: async () => {} };
+    const requests: string[] = [];
+    const responses = [
+      { device_code: "device-code", user_code: "ABCD-EFGH", verification_uri: "https://github.com/login/device", expires_in: 900, interval: 5 },
+      { access_token: "built-in-client-token", token_type: "bearer", scope: "gist" },
+    ];
+    await expect(authenticateGithub({
+      env: {},
+      tokenStore,
+      fetchImpl: async (_input, init) => {
+        requests.push(String(init?.body ?? ""));
+        return { ok: true, status: 200, json: async () => responses.shift() } as Response;
+      },
+    })).resolves.toMatchObject({ authenticated: true, source: "credential-store" });
+    expect(requests[0]).toContain("client_id=Ov23li5OJCY5WtaDy3gf");
   });
 
   it("reports an unavailable credential store without suggesting alternate login paths", async () => {

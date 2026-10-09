@@ -33,17 +33,15 @@ export interface GitHubLoginOptions extends GitHubAuthDependencies {
 
 const DEFAULT_SCOPE = "gist";
 const DEFAULT_TIMEOUT_MS = 10 * 60_000;
+const DEFAULT_CLIENT_ID = "Ov23li5OJCY5WtaDy3gf";
 
 export function defaultGitHubTokenStore(options: PortableGitHubTokenStoreOptions = {}): GitHubTokenStore {
   return portableGitHubTokenStore(options);
 }
 
-function missingAuthDetail(env: NodeJS.ProcessEnv, storeError: boolean): string {
+function missingAuthDetail(storeError: boolean): string {
   if (storeError) {
     return "The local credential store is unavailable. Check that the user configuration directory is writable.";
-  }
-  if (!env.PI_GITHUB_OAUTH_CLIENT_ID?.trim()) {
-    return "No GitHub authorization found. Set PI_GITHUB_OAUTH_CLIENT_ID, then run /gist-sync auth.";
   }
   return "No GitHub authorization found. Run /gist-sync auth.";
 }
@@ -54,20 +52,19 @@ async function tokenFromStore(store: GitHubTokenStore): Promise<string | undefin
 }
 
 export async function githubAuthStatus(options: GitHubAuthDependencies = {}): Promise<GitHubAuthStatus> {
-  const env = options.env ?? process.env;
   const store = options.tokenStore ?? defaultGitHubTokenStore({ directory: options.credentialDirectory });
   try {
     if (await tokenFromStore(store)) {
       return { authenticated: true, source: "credential-store", detail: "GitHub token is available in the local credential store" };
     }
-    return { authenticated: false, source: "none", detail: missingAuthDetail(env, false) };
+    return { authenticated: false, source: "none", detail: missingAuthDetail(false) };
   } catch {
-    return { authenticated: false, source: "none", detail: missingAuthDetail(env, true) };
+    return { authenticated: false, source: "none", detail: missingAuthDetail(true) };
   }
 }
 
 export async function githubTokenFromAuth(options: GitHubAuthDependencies = {}): Promise<string> {
-  const store = options.tokenStore ?? defaultGitHubTokenStore();
+  const store = options.tokenStore ?? defaultGitHubTokenStore({ directory: options.credentialDirectory });
   try {
     const token = await tokenFromStore(store);
     if (token) return token;
@@ -170,8 +167,7 @@ export async function authenticateGithub(options: GitHubLoginOptions = {}): Prom
   if (before.authenticated) return before;
   if (/local credential store is unavailable/i.test(before.detail)) throw new Error(before.detail);
 
-  const clientId = (options.clientId ?? env.PI_GITHUB_OAUTH_CLIENT_ID)?.trim();
-  if (!clientId) throw new Error("Set PI_GITHUB_OAUTH_CLIENT_ID, then run /gist-sync auth.");
-  const store = options.tokenStore ?? defaultGitHubTokenStore();
+  const clientId = (options.clientId ?? env.PI_GITHUB_OAUTH_CLIENT_ID ?? DEFAULT_CLIENT_ID).trim();
+  const store = options.tokenStore ?? defaultGitHubTokenStore({ directory: options.credentialDirectory });
   return authenticateGithubDeviceFlow(options, clientId, store);
 }
